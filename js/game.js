@@ -568,12 +568,14 @@ function nextTable(){
       totalBack: 0,
       order: [...Array(table.rallies[0].choices.length).keys()].sort(() => Math.random() - 0.5),
       notice: weird && !n.weirdNoticeShown,
+      mobAff: CONFIG.mobAff.start,
     };
     if (weird) n.weirdNoticeShown = true;
     if (!weird && table.img) (n.mobsSeen = n.mobsSeen || []).push({ job: table.job, name: table.name });
-    // 容姿が低いうちは、酔客の無神経が顔に飛んでくる（容姿を磨くほど減る）
+    // 容姿が低いうちは、酔客の無神経が顔に飛んでくる（容姿を磨くほど減る）。女性客は言わない
     const bs = CONFIG.busu;
-    if (!weird && table.img && State.stats.looks < bs.looksCeil
+    if (!weird && table.img && table.img !== 'josei' && State.day >= bs.fromDay
+        && State.stats.looks < bs.looksCeil
         && Math.random() < (bs.looksCeil - State.stats.looks) * bs.ratePerPoint) {
       n.current.insult = DATA.busuLines[Math.floor(Math.random() * DATA.busuLines.length)];
       State.mental = clampMental(State.mental + bs.mental);
@@ -625,11 +627,13 @@ G.pickLight = function(orderIdx){
   cur.totalBack += amount;
   if (amount > 0) State.night.earned += amount;
   State.mental = clampMental(State.mental + ch.mental);
+  cur.affDelta = ch.drinks * CONFIG.mobAff.perDrink;
+  cur.mobAff = clampAff(cur.mobAff + cur.affDelta);
   // モブ卓の気まぐれ注文（最終ラリーまで盛り上げた卓なら、たまに追加注文が入る）
   cur.bonus = null;
   const mo = CONFIG.pay.mobOrder;
   const lastRally = cur.rally + 1 >= cur.table.rallies.length;
-  if (lastRally && cur.table.img && cur.totalDrinks >= mo.minDrinks && Math.random() < mo.chance) {
+  if (lastRally && State.day >= mo.fromDay && cur.table.img && cur.totalDrinks >= mo.minDrinks && Math.random() < mo.chance) {
     const it = mo.items[Math.floor(Math.random() * mo.items.length)];
     const bonusBack = Math.round(it.price * CONFIG.pay.bottleBackRate);
     State.night.earned += bonusBack;
@@ -988,7 +992,7 @@ function endNight(){
   // 閉店後、まれにモブ客からアフターの誘い
   const ai = CONFIG.afterInvite;
   const seen = State.night.mobsSeen || [];
-  if (!State.night.afterDone && State.screen !== 'soutai' && !State.afterReturn && seen.length && Math.random() < ai.chance) {
+  if (State.day >= ai.fromDay && !State.night.afterDone && State.screen !== 'soutai' && !State.afterReturn && seen.length && Math.random() < ai.chance) {
     State.night.afterDone = true;
     State.night.wasFull = true;   // 皆勤ぶんの信頼はアフター後に付ける
     State.afterGuest = seen[Math.floor(Math.random() * seen.length)];
@@ -1298,8 +1302,10 @@ function renderStatus(){
       <span class="st-day">${dateLabel(State.day)} ${weekdayName(State.day)}<small>・残り${daysLeft}日</small></span>
       <span class="st-money">所持金 ${yen(State.money)}<small> / 目標 ${yen(CONFIG.goalMoney)}</small></span>
     </div>
-    <div class="st-row st-stats">
-      <span>容姿 ${State.stats.looks}</span><span>知性 ${State.stats.intel}</span><span>トーク ${State.stats.talk}</span>
+    <div class="st-row st-bars">
+      <span class="st-meter">容姿 ${bar(State.stats.looks, CONFIG.statMax, 'bar-looks')}</span>
+      <span class="st-meter">知性 ${bar(State.stats.intel, CONFIG.statMax, 'bar-intel')}</span>
+      <span class="st-meter">トーク ${bar(State.stats.talk, CONFIG.statMax, 'bar-talk')}</span>
     </div>
     <div class="st-row st-bars">
       <span class="st-meter">体力 ${bar(State.stamina, State.staminaMax, staminaCls)}</span>
@@ -1736,8 +1742,8 @@ function renderNight(){
   return renderMain();
 }
 
-function nightHeader(title, badge){
-  return `<div class="cust-head"><span class="cust-name">${title}</span>${badge || ''}</div>
+function nightHeader(title, badge, aff){
+  return `<div class="cust-head"><span class="cust-name">${title}</span>${aff || ''}${badge || ''}</div>
     <p class="cust-intro">${State.night.step}卓目</p>`;
 }
 
@@ -1747,6 +1753,7 @@ function renderLight(){
   const who = t.job ? `${esc(t.job)}・${esc(t.name)}` : (cur.weird ? '回された卓' : 'フリーの一見さん');
   const title = `${cur.weird ? '🌀' : '🥂'} ${who}`;
   const notice = cur.notice ? `<p class="warn">${esc(DATA.weirdNotice)}</p>` : '';
+  const affMeter = `<span class="cust-aff">好感度 ${bar(cur.mobAff, 100, 'bar-aff')}</span>`;
   const r = cur.table.rallies[cur.rally];
   const isLast = cur.rally + 1 >= cur.table.rallies.length;
   // モブ卓は1枚絵（水割り・普通）を表示。imgが無い既存卓は従来どおり画像なし
@@ -1757,7 +1764,7 @@ function renderLight(){
     const insult = cur.insult
       ? `<div class="story-box bad">${para(cur.insult)}</div>
          <div class="note-box"><p>・メンタル ${CONFIG.busu.mental}</p><p>・（……容姿を磨けば、こういう夜は減っていく）</p></div>` : '';
-    $screen().innerHTML = `${nightHeader(title, stageBadge(cur))}${notice}
+    $screen().innerHTML = `${nightHeader(title, stageBadge(cur), affMeter)}${notice}
       ${mobImg}
       <div class="story-box">${para(cur.table.desc)}</div>
       ${insult}
@@ -1765,7 +1772,7 @@ function renderLight(){
     return;
   }
   if (cur.phase === 'pick') {
-    $screen().innerHTML = `${nightHeader(title, stageBadge(cur))}
+    $screen().innerHTML = `${nightHeader(title, stageBadge(cur), affMeter)}
       ${mobImg}
       <div class="story-box cust-line">${para(r.line)}</div>
       <div class="choices">${cur.order.map((idx, oi) =>
@@ -1773,11 +1780,11 @@ function renderLight(){
   } else {
     const bonusBox = cur.bonus
       ? `<div class="story-box ok"><p>「──あ、あと${esc(cur.bonus.label)}ひとつ」\n思わぬ追加注文だ。（${yen(cur.bonus.price)}・バック +${yen(cur.bonus.back)}）</p></div>` : '';
-    $screen().innerHTML = `${nightHeader(title, stageBadge(cur))}
+    $screen().innerHTML = `${nightHeader(title, stageBadge(cur), affMeter)}
       ${mobImg}
       <div class="story-box">${para(cur.picked.react)}</div>
       ${bonusBox}
-      <div class="note-box"><p>・ドリンク${cur.picked.drinks}杯 バック +${yen(cur.amount)}／メンタル ${cur.picked.mental}</p></div>
+      <div class="note-box"><p>・ドリンク${cur.picked.drinks}杯 バック +${yen(cur.amount)}／好感度 +${cur.affDelta}／メンタル ${cur.picked.mental}</p></div>
       <button class="btn btn-primary" onclick="G.lightNext()">${isLast ? '次の卓へ' : '次へ'}</button>`;
   }
 }
@@ -1788,7 +1795,7 @@ function stageLabel(m){
     : `場内指名 ${m.turn + 1}/${CONFIG.serve.jonaiRallies}`;
 }
 
-// 客の関係バッジ：フリー（青枠）／場内指名（オレンジ背景）／本指名（ピンク枠）
+// 客の関係バッジ：フリー（青枠）／場内指名（オレンジ枠）／本指名（ピンク枠）
 function stageBadge(m){
   if (m.kind === 'main') {
     if (m.honshimei) return '<span class="cust-badge badge-honshimei">本指名</span>';
@@ -1855,10 +1862,7 @@ function renderMain(){
       `<button class="choice" onclick="G.pickChoice(${oi})">${esc(m.effChoices[idx].text)}${mark(idx)}</button>`).join('');
     const nadameru = m.nadameruWindow
       ? `<button class="choice choice-nadameru" onclick="G.nadameru()">〈必死になだめる〉（好感度${CONFIG.serve.nadameru.affection}・メンタル${CONFIG.serve.nadameru.mental}）</button>` : '';
-    const sceneDesc = m.stage === 'first' && m.turn === 0 && m.episode.desc
-      ? `<div class="story-box">${para(m.episode.desc)}</div>` : '';
     $screen().innerHTML = `${header}
-      ${sceneDesc}
       ${typeHint}
       <div class="story-box cust-line">${para(turnData(m).line)}</div>
       ${moodRead}${kenCue}${mindHint}
