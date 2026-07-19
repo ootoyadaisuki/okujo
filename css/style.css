@@ -261,3 +261,92 @@ h2 { font-size: 18px; margin: 16px 0 8px; }
   object-fit: cover;
   display: block;
 }
+
+/* ---- 本指名の入電（逆転裁判の「異議あり！」枠） ---- */
+/* images/honshimei.webp があれば画像を、無ければ .noimg で文字組みにフォールバック */
+.shimei-call {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  margin: 8px 0 14px;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 45%, #4a1030 0%, #16040e 70%);
+  animation: shimei-shake 0.45s cubic-bezier(.36,.07,.19,.97) both;
+}
+.shimei-call::before {
+  content: '';
+  position: absolute;
+  inset: -50%;
+  background: repeating-conic-gradient(
+    from 0deg at 50% 50%,
+    rgba(255, 214, 102, 0.18) 0deg 6deg,
+    transparent 6deg 12deg);
+  animation: shimei-spin 8s linear infinite;
+}
+.shimei-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  z-index: 2;
+}
+.shimei-call.noimg .shimei-img { display: none; }
+
+/* 画像があるときは文字を出さない（画像に焼き込まれている前提） */
+.shimei-text,
+.shimei-who { display: none; }
+.shimei-call.noimg .shimei-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  position: relative;
+  z-index: 3;
+  font-weight: 900;
+  font-size: clamp(30px, 11vw, 62px);
+  letter-spacing: 0.06em;
+  line-height: 1.05;
+  color: #fff;
+  text-shadow:
+     3px 3px 0 #b3003c,  -3px 3px 0 #b3003c,
+     3px -3px 0 #b3003c, -3px -3px 0 #b3003c,
+     0 8px 22px rgba(0, 0, 0, 0.75);
+  transform: rotate(-4deg);
+  animation: shimei-pop 0.4s cubic-bezier(.18,1.5,.5,1) both;
+}
+.shimei-call.noimg .shimei-who {
+  display: block;
+  position: absolute;
+  z-index: 3;
+  bottom: 8%;
+  color: #ffd666;
+  font-size: clamp(13px, 3.6vw, 18px);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+}
+
+@keyframes shimei-spin { to { transform: rotate(360deg); } }
+@keyframes shimei-pop {
+  0%   { transform: rotate(-4deg) scale(2.6); opacity: 0; }
+  60%  { transform: rotate(-4deg) scale(0.92); opacity: 1; }
+  100% { transform: rotate(-4deg) scale(1); }
+}
+@keyframes shimei-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-9px); }
+  40% { transform: translateX(8px); }
+  60% { transform: translateX(-5px); }
+  80% { transform: translateX(3px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shimei-call, .shimei-call.noimg .shimei-text { animation: none; }
+  .shimei-call::before { animation: none; }
+}

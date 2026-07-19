@@ -30,6 +30,8 @@ function inWinterBreak(day){
 }
 function weekdayName(day){ return CONFIG.weekdays[(day - 1) % 7]; }
 function isWeekend(day){ const w = weekdayName(day); return w === '土' || w === '日'; }
+// 日曜は店休。出勤という選択肢そのものが無い日
+function isSunday(day){ return weekdayName(day) === '日'; }
 // 明日以降（fromDay以降）、1月末までに大学に出席できる回数（土日・冬休みを除く）
 function uniChancesLeft(fromDay){
   let n = 0;
@@ -105,9 +107,18 @@ G.continueGame = function(){
   if (State.afterReturn === undefined) State.afterReturn = null;
   if (State.lastPuchi == null) State.lastPuchi = 0;
   if (State.puchiIdx == null) State.puchiIdx = 0;
+  if (!State.puchiUsed) State.puchiUsed = {};
   if (State.skipStreak == null) { State.skipStreak = 0; State.lastSkipDay = -9; }
   if (State.benchNext == null) State.benchNext = false;
   if (State.uniBuzz == null) State.uniBuzz = false;
+  if (State.workedToday == null) State.workedToday = false;
+  if (State.workedYesterday == null) State.workedYesterday = true;
+  if (State.nagashiStreak == null) State.nagashiStreak = 0;
+  if (State.lastNagashiDay == null) State.lastNagashiDay = -9;
+  if (State.seikeiCount == null) State.seikeiCount = 0;
+  if (State.busuSeen == null) State.busuSeen = false;
+  if (State.sundayIdx == null) State.sundayIdx = 0;
+  if (State.sunday === undefined) State.sunday = null;
   for (const id of Object.keys(CUSTOMERS)) {
     if (!State.cust[id]) {
       State.cust[id] = { affection: CONFIG.serve.affectionStart, banned: false, met: false, epIdx: 0, lastVisit: 0, visits: 0, lastSuccess: false, missionIdx: 0, donperiCount: 0 };
@@ -144,7 +155,6 @@ G.newGame = function(){
     trust: CONFIG.start.trust,
     topics: {},
     haishinIdx: 0,
-    genbaIdx: 0,
     uniAttended: 0,
     uniWarned: {},
     uniIdx: 0,
@@ -156,8 +166,12 @@ G.newGame = function(){
     seikeiBuzz: null,
     tobiDay: null,
     afterReturn: null, afterGuest: null, afterResult: null,
-    lastPuchi: 0, puchiIdx: 0,
+    lastPuchi: 0, puchiIdx: 0, puchiUsed: {},
     skipStreak: 0, lastSkipDay: -9,
+    workedToday: false, workedYesterday: true,   // 朝のイベントの出し分け（昨夜、店に出たか）
+    nagashiStreak: 0, lastNagashiDay: -9,        // 流しの連投を店長が見ている
+    seikeiCount: 0, busuSeen: false,             // 12/27の初ダメ出し判定
+    sundayIdx: 0, sunday: null,                  // 日曜（店休）の街歩き
     benchNext: false,
     kintoreBuzz: false,
     uniBuzz: false,
@@ -226,11 +240,15 @@ function applyEffects(o, notes){
     // 一段締まった夜は、卓で気づかれる
     if (o.taikei > 0 && Math.floor(before / 15) !== Math.floor(State.parts.taikei / 15)) State.kintoreBuzz = true;
   }
+  // 体力の「上限」だけを押し上げる。いまの体力は回復しない（鍛えた分は、削れた体には戻らない）
   if (o.roll && State.staminaMax < CONFIG.staminaMaxCap) {
     const gain = weightedRoll(o.roll);
-    State.staminaMax = Math.min(CONFIG.staminaMaxCap, State.staminaMax + gain);
-    State.stamina = clampStamina(State.stamina + gain);
-    notes.push(`体力の上限 +${gain}（いま ${State.staminaMax}）${gain >= 3 ? '　💪 大当たり！' : ''}`);
+    if (gain > 0) {
+      State.staminaMax = Math.min(CONFIG.staminaMaxCap, State.staminaMax + gain);
+      notes.push(`体力の上限 +${gain}（いま ${State.staminaMax}）${gain >= 3 ? '　💪 大当たり！' : ''}`);
+    } else {
+      notes.push('体力の上限は、今日は動かなかった');
+    }
   }
   if (o.topic) {
     if (!State.topics[o.topic]) {
@@ -297,13 +315,9 @@ G.pickDay = function(id){
       applyUniEvent(ev, notes);
     }
   }
-  if (id === 'rest' && Math.random() < CONFIG.day.rest.kareshiChance) {
-    State.mental = clampMental(State.mental + CONFIG.day.rest.kareshiBonus);
-    story = DATA.kareshiEvent;
-    notes.push(`さらにメンタル +${CONFIG.day.rest.kareshiBonus}`);
-  }
 
-  State.dayResult = { notes, story, scene: id === 'uni' ? 'uni_class' : (id === 'rest' ? 'rest' : null) };
+  // 「休む」は昼のまま。画像も昼の部屋のまま（一日ずっとこの部屋にいた、という絵）
+  State.dayResult = { notes, story, scene: id === 'uni' ? 'uni_class' : (id === 'rest' ? 'room' : null) };
   State.screen = 'dayResult';
   render();
 };
@@ -312,7 +326,7 @@ G.pickDay = function(id){
 const MENU_ITEM_SCENE = {
   run: 'kintore_run', gym: 'kintore_gym', personal: 'kintore_gym',
   manga: 'dokusho', jiko: 'dokusho', shosetsu: 'dokusho', shinbun: 'dokusho',
-  genba: 'genba', karaoke: 'karaoke', eiga: 'eiga', cafe: 'cafe',
+  karaoke: 'karaoke', eiga: 'eiga', cafe: 'cafe', sauna: null,
 };
 
 // メニュー項目の確定
@@ -325,9 +339,8 @@ G.pickMenu = function(i){
   applyEffects(o, notes);
 
   let story = '';
-  if (o.id === 'haishin')    { story = DATA.haishinScenes[State.haishinIdx % DATA.haishinScenes.length]; State.haishinIdx++; }
-  else if (o.id === 'genba') { story = DATA.genbaScenes[State.genbaIdx % DATA.genbaScenes.length]; State.genbaIdx++; }
-  else                       { story = (DATA[cmd + 'Scenes'] || {})[o.id] || ''; }
+  if (o.id === 'haishin') { story = DATA.haishinScenes[State.haishinIdx % DATA.haishinScenes.length]; State.haishinIdx++; }
+  else                    { story = (DATA[cmd + 'Scenes'] || {})[o.id] || ''; }
 
   State.dayResult = { notes, story, scene: MENU_ITEM_SCENE[o.id] || null };
   State.screen = 'dayResult';
@@ -352,6 +365,7 @@ G.pickSeikeiClinic = function(i){
   const pid = State.seikeiPart;
   const info = DATA.parts[pid];
   const notes = [`${yen(c.cost)} 使った（${c.name}）`];
+  State.seikeiCount = (State.seikeiCount || 0) + 1;   // 一度でも手を入れたか（12/27の初ダメ出し判定に使う）
   let story;
   if (Math.random() < c.rate) {
     const before = State.parts[pid];
@@ -372,8 +386,13 @@ G.pickSeikeiClinic = function(i){
   render();
 };
 
-// 出勤前の関門（クビ／強制欠勤／発熱）。true = 出勤できず画面遷移済み
+// 出勤前の関門（店休日／クビ／強制欠勤／発熱）。true = 出勤できず画面遷移済み
 function nightGates(){
+  // 日曜は店が閉まっている。どの入口から来ても出勤にはならない
+  if (isSunday(State.day)) {
+    G.toSunday();
+    return true;
+  }
   if (State.trust <= CONFIG.trust.firedLine) {
     State.screen = 'fired';
     render();
@@ -410,6 +429,7 @@ G.toNightNagashi = function(){
   State.mental = clampMental(State.mental + ng.mental);
   State.stamina = clampStamina(State.stamina + ng.stamina);
   addTrust(CONFIG.trust.perNight);
+  State.workedToday = true;
   State.night = {
     breakdown: [
       `日給（流し・早上がり） ${yen(ng.wage)}`,
@@ -418,13 +438,28 @@ G.toNightNagashi = function(){
     ],
     trustNotes: [`皆勤 +${CONFIG.trust.perNight}`],
   };
+  // 流しの連投は店長に見えている。3回続けたところで、閉店後に呼び止められる
+  State.nagashiStreak = (State.lastNagashiDay === State.day - 1) ? State.nagashiStreak + 1 : 1;
+  State.lastNagashiDay = State.day;
+  if (State.nagashiStreak >= ng.scoldStreak) {
+    State.nagashiStreak = 0;   // 一度言われたら、そこから数え直し
+    addTrust(ng.scoldTrust, '流しの連投を見抜かれた');
+    State.mental = clampMental(State.mental + ng.scoldMental);
+    State.nagashiEarned = earned;
+    State.screen = 'nagashiScold';
+    render();
+    return;
+  }
   endDay(earned);
 };
+
+G.endNagashiScold = function(){ endDay(State.nagashiEarned || 0); };
 
 G.endForcedRest = function(){ endDay(0); };
 
 // 希望休：回復は大きいが、連続で取るほど店長の信頼が削れる
 G.skipWork = function(){
+  if (isSunday(State.day)) { G.toSunday(); return; }   // 休む対象の夜が、そもそも無い
   const sw = CONFIG.skipWork;
   State.skipStreak = (State.lastSkipDay === State.day - 1) ? State.skipStreak + 1 : 1;
   State.lastSkipDay = State.day;
@@ -538,7 +573,7 @@ function startNight(){
   if (State.day === 1) { State.night.showIntro = true; State.night.tutorialIdx = 0; }
   nextTable();
   // 研修明けの初日は、接客に入る前にレイナが背中を押してくれる
-  if (State.day === CONFIG.tutorial.helpDays + 1 && !State.day3StartSeen && State.screen === 'night') {
+  if (State.day >= CONFIG.tutorial.helpDays + 1 && !State.day3StartSeen && State.screen === 'night') {
     State.day3StartSeen = true;
     playScene('day3Start', () => { State.screen = 'night'; render(); });
   }
@@ -557,6 +592,12 @@ function drawTable(weird){
     State[dk] = pool.slice().sort(() => Math.random() - 0.5);
     State[pk] = 0;
   }
+  // 女性客（偵察・同伴）は店が育ってから。序盤は飛ばして次を引く
+  while (State[pk] < State[dk].length
+         && State[dk][State[pk]].img === 'josei' && State.day < CONFIG.joseiFromDay) {
+    State[pk]++;
+  }
+  if (State[pk] >= State[dk].length) { State[dk] = null; return drawTable(weird); }
   return State[dk][State[pk]++];
 }
 
@@ -593,11 +634,15 @@ function nextTable(){
     };
     if (weird) n.weirdNoticeShown = true;
     if (!weird && table.img) (n.mobsSeen = n.mobsSeen || []).push({ job: table.job, name: table.name });
-    // 容姿が低いうちは、酔客の無神経が顔に飛んでくる（容姿を磨くほど減る）。女性客は言わない
+    // 容姿が低いうちは、酔客の無神経が顔に飛んでくる（容姿を磨くほど減る）。言うのは男性客だけ
     const bs = CONFIG.busu;
-    if (!weird && table.img && table.img !== 'josei' && State.day >= bs.fromDay
-        && State.stats.looks < bs.looksCeil
-        && Math.random() < (bs.looksCeil - State.stats.looks) * bs.ratePerPoint) {
+    const maleMob = !weird && table.img && table.img !== 'josei';
+    // 12/27以降、まだ一度もプチ整形していないなら、最初に当たった男性客が必ず言ってくる
+    // （その日に休む・流すこともあるので「12/27ちょうど」ではなく「12/27以降の初回」で確定させる）
+    const firstStrike = maleMob && State.day >= bs.firstDay && !State.busuSeen && !State.seikeiCount;
+    if (maleMob && State.day >= bs.fromDay && State.stats.looks < bs.looksCeil
+        && (firstStrike || Math.random() < (bs.looksCeil - State.stats.looks) * bs.ratePerPoint)) {
+      State.busuSeen = true;
       n.current.insult = DATA.busuLines[Math.floor(Math.random() * DATA.busuLines.length)];
       State.mental = clampMental(State.mental + bs.mental);
     }
@@ -621,7 +666,8 @@ function nextTable(){
       tension: 0,
       sold: null, exploded: false,
       nadameruWindow: false,
-      phase: 'mainIntro',   // まず状況説明→「接客スタート」→会話
+      // 本指名なら、まず「本指名が入りました！」の一枚を叩きつけてから状況説明へ
+      phase: cs.visits >= 2 ? 'honshimeiCall' : 'mainIntro',
       firstMeet: !cs.met,
       showSenpai: !cs.met && State.stats.intel >= CONFIG.intel.senpaiLine,
       effChoices: null, choiceOrder: null, result: null, mindState: 'ok',
@@ -662,6 +708,11 @@ G.pickLight = function(orderIdx){
     cur.bonus = { label: it.label, price: it.price, back: bonusBack };
   }
   cur.phase = 'react';
+  render();
+};
+
+G.afterHonshimeiCall = function(){
+  State.night.current.phase = 'mainIntro';
   render();
 };
 
@@ -712,7 +763,7 @@ function buildChoices(m){
     const bad = turn.choices.filter(c => c.type === 'hazure' || c.type === 'jirai');
     m.effChoices = [...bad, DATA.worstChoice];
     m.mindState = 'broken';
-  } else if (State.mental < mc.tiredLine) {
+  } else if (State.mental <= mc.tiredLine) {
     // 頭が回らない：ベストの一言だけが浮かばず、代わりに疲れた心の一言が混ざる（計4択のまま）
     const extra = DATA.tsukareChoices[Math.floor(Math.random() * DATA.tsukareChoices.length)];
     const rest = turn.choices.filter(c => c.type !== 'seikai');
@@ -775,6 +826,8 @@ G.pickChoice = function(orderIdx){
 
   m.nadameruWindow = false;
   const beforeMood = moodOf(m);
+  // ボトルが入ったあとの連続正解＝2本目の窓（途切れたらリセット）
+  m.streakSinceSale = ch.type === 'seikai' ? (m.streakSinceSale || 0) + 1 : 0;
   if (ch.type === 'seikai') {
     m.correct++;
     tensionUp(m, 1);            // 正解のたびに表情が一段明るくなる
@@ -842,9 +895,13 @@ G.afterReact = function(){
     return;
   }
   // 昼の行動へのフィードバック（整形＞筋トレ＞大学の優先で、1卓に1つだけ）
-  if (m.stage === 'first' && m.turn === 0 && !m.buzzDone && (State.seikeiBuzz || State.kintoreBuzz || State.uniBuzz)) {
+  // 「見た目が変わった」に気づけるのは、前の姿を知っている客だけ。初対面の客に比較対象はない
+  // （大学ネタは見た目の話ではないので、初対面でも出る）
+  const knowsYou = !m.firstMeet;
+  const lookBuzz = knowsYou && (State.seikeiBuzz || State.kintoreBuzz);
+  if (m.stage === 'first' && m.turn === 0 && !m.buzzDone && (lookBuzz || State.uniBuzz)) {
     m.buzzDone = true;
-    if (State.seikeiBuzz) {
+    if (lookBuzz && State.seikeiBuzz) {
       const b = State.seikeiBuzz;
       State.seikeiBuzz = null;
       const bz = CONFIG.seikei.buzz;
@@ -857,7 +914,7 @@ G.afterReact = function(){
         State.mental = clampMental(State.mental + bz.failMental);
       }
       m.buzzResult = { kind: 'seikei', ok: b.ok };
-    } else if (State.kintoreBuzz) {
+    } else if (lookBuzz && State.kintoreBuzz) {
       State.kintoreBuzz = false;
       const bz = CONFIG.kintore.buzz;
       State.night.earned += bz.drink;
@@ -875,7 +932,12 @@ G.afterReact = function(){
     render();
     return;
   }
-  if (m.stage === 'jonai' && (m.turn + 1) >= CONFIG.serve.onedari.fromJonaiTurn && !m.sold) {
+  const od = CONFIG.serve.onedari;
+  // 1本目＝まだ入っていないとき。2本目＝入れてもらったあと、正解を続けて機嫌を保てたときだけ
+  const canOnedari = !m.sold
+    || ((m.soldCount || 0) < od.maxPerTable && (m.streakSinceSale || 0) >= od.encoreStreak);
+  if (m.stage === 'jonai' && (m.turn + 1) >= od.fromJonaiTurn && canOnedari) {
+    m.encore = !!m.sold;
     m.phase = 'onedari';
   } else {
     advanceTurn();
@@ -946,6 +1008,11 @@ function onedariTier(m){
   if (a >= o.donperiLine && moodOf(m) === 'kou') tier = 'donperi';
   else if (a >= o.champagneLine) tier = 'champagne';
   else if (a >= o.sparkLine) tier = 'spark';
+  // 桁の違う客の下限（石油王など）。この人が入れると決めたら、安いものは出てこない
+  if (tier && m.cust.tierFloor) {
+    const floorIdx = TIER_ORDER.indexOf(m.cust.tierFloor);
+    if (TIER_ORDER.indexOf(tier) < floorIdx) tier = m.cust.tierFloor;
+  }
   if (tier && TIER_ORDER.indexOf(tier) > capIdx) tier = m.cust.tierCap; // 予算の天井
   return tier;
 }
@@ -970,9 +1037,17 @@ G.onedari = function(doIt){
     State.night.breakdown.push(`${TIER_NAME[tier]}バック${Math.round(CONFIG.pay.bottleBackRate * 100)}%（${m.cust.name}） ${yen(back)}`);
     addTrust(CONFIG.trust.bottle[tier], `ボトルを入れた（${TIER_NAME[tier]}）`);
     m.sold = tier;
+    m.soldCount = (m.soldCount || 0) + 1;
+    m.streakSinceSale = 0;
     custState(m).affection = clampAff(custState(m).affection + o.cashInDrop[tier]);
-    const rozeText = `「ね、今日……」\n\n「──いや。今日は、いつものじゃつまらないな」\n客の方が先に手を挙げた。「一番上のやつ、持ってきて」\n\nドンペリロゼ級（${yen(price)}）が卓に入った！　店内が、少しざわついた。（バック${Math.round(CONFIG.pay.bottleBackRate * 100)}% ＝ +${yen(back)}）`;
-    m.onedariResult = { ok: true, text: roze ? rozeText : `「ね、今日……ちょっとだけ、贅沢しちゃいません？」\n\n「……しょうがないなあ。じゃあ、${TIER_NAME[tier]}」\n\n${TIER_NAME[tier]}（${yen(price)}）が卓に入った！（バック${Math.round(CONFIG.pay.bottleBackRate * 100)}% ＝ +${yen(back)}）` };
+    const rate = Math.round(CONFIG.pay.bottleBackRate * 100);
+    const rozeText = `「ね、今日……」\n\n「──いや。今日は、いつものじゃつまらないな」\n客の方が先に手を挙げた。「一番上のやつ、持ってきて」\n\nドンペリロゼ級（${yen(price)}）が卓に入った！　店内が、少しざわついた。（バック${rate}% ＝ +${yen(back)}）`;
+    // 2本目は、こちらから頼むというより、乗ってきた相手に乗り返す形になる
+    const encoreText = `「……ねえ。この空気のまま、終わらせちゃうんですか？」\n\n「──はは、言うようになったな」\n彼はグラスを置いて、ボーイさんに指を二本立てた。\n\n「もう一本。同じやつ」\n\n${TIER_NAME[tier]}（${yen(price)}）、本日2本目！（バック${rate}% ＝ +${yen(back)}）`;
+    m.onedariResult = { ok: true,
+      text: roze ? rozeText
+        : m.encore ? encoreText
+        : `「ね、今日……ちょっとだけ、贅沢しちゃいません？」\n\n「……しょうがないなあ。じゃあ、${TIER_NAME[tier]}」\n\n${TIER_NAME[tier]}（${yen(price)}）が卓に入った！（バック${rate}% ＝ +${yen(back)}）` };
   } else {
     custState(m).affection = clampAff(custState(m).affection + o.failAffection);
     if (moodOf(m) === 'ken') { explode(); return; }
@@ -1028,6 +1103,8 @@ function endNight(){
 function finishNight(full){
   State.stats.talk = clampStat(State.stats.talk + CONFIG.talkGrowthPerNight);
   if (full) addTrust(CONFIG.trust.perNight, '皆勤');
+  State.workedToday = true;
+  State.nagashiStreak = 0;   // 本気で出た夜は、流しの連投カウントを切る
   endDay(State.night.earned);
 }
 
@@ -1070,6 +1147,9 @@ function ryunenUnsettled(){
 function endDay(earned){
   State.money += earned;
   State.lastEarned = earned;
+  // 翌朝のイベント出し分け用（昨夜、店に出たか＝店・客・帰り道の話をしていいか）
+  State.workedYesterday = !!State.workedToday;
+  State.workedToday = false;
 
   // 早期クリアは留年が回避可能なときだけ（3月に留年が確定する人間に勝ち逃げはない）
   if (State.money >= CONFIG.goalMoney && !ryunenUnsettled()) { State.screen = 'ending'; State.win = true; render(); return; }
@@ -1188,18 +1268,25 @@ function enterDay(){
     return;
   }
   // プチイベント（10日に1回くらいの小さな日常）
+  // 昨夜の過ごし方に合うものだけを、上から順に消化する
+  //   出勤した朝＝店・客・帰り道の話／休んだ朝＝部屋にいた人間の話（通販・投げ銭など）
   const pz = CONFIG.puchi;
-  if (State.day - (State.lastPuchi || 0) >= pz.minGap
-      && State.puchiIdx < DATA.puchiEvents.length && Math.random() < pz.chance) {
-    State.lastPuchi = State.day;
-    const ev = DATA.puchiEvents[State.puchiIdx++];
-    if (ev.mental)  State.mental  = clampMental(State.mental + ev.mental);
-    if (ev.stamina) State.stamina = clampStamina(State.stamina + ev.stamina);
-    if (ev.money)   State.money  += ev.money;
-    State.puchiEvent = ev;
-    State.screen = 'puchi';
-    render();
-    return;
+  if (State.day - (State.lastPuchi || 0) >= pz.minGap && Math.random() < pz.chance) {
+    const mode = State.workedYesterday ? 'work' : 'off';
+    const idx = DATA.puchiEvents.findIndex((e, i) =>
+      !State.puchiUsed[i] && (!e.when || e.when === mode));
+    if (idx >= 0) {
+      State.puchiUsed[idx] = true;
+      State.lastPuchi = State.day;
+      const ev = DATA.puchiEvents[idx];
+      if (ev.mental)  State.mental  = clampMental(State.mental + ev.mental);
+      if (ev.stamina) State.stamina = clampStamina(State.stamina + ev.stamina);
+      if (ev.money)   State.money  += ev.money;
+      State.puchiEvent = ev;
+      State.screen = 'puchi';
+      render();
+      return;
+    }
   }
   // VIP雑用ミッション（重要人物からの頼まれごと。朝の電話で打診される）
   const mi = pendingMission();
@@ -1217,6 +1304,7 @@ function enterDay(){
 
 // 次に打診すべきミッション（VIPのみ・来店回数が条件・間隔を空ける）
 function pendingMission(){
+  if (isSunday(State.day)) return null;   // 「今日は店に出られない」が意味を持たない日には打診されない
   if (State.day - (State.lastMission || -99) < CONFIG.mission.gapDays) return null;
   for (const id of Object.keys(CUSTOMERS)) {
     if (CUSTOMERS[id].tier !== 'vip') continue;
@@ -1273,6 +1361,8 @@ G.holidayChoice = function(i){
 G.endHoliday = function(){
   State.holidayDone[State.day] = true;
   State.holidayPicked = null;
+  State.workedYesterday = false;   // 店休日。夜の話は起きていない
+  State.workedToday = false;
   if (State.money >= CONFIG.goalMoney && !ryunenUnsettled()) { State.win = true; State.screen = 'ending'; render(); return; }
   if (State.day >= CONFIG.totalDays) { State.win = State.money >= CONFIG.goalMoney; State.screen = 'ending'; render(); return; }
   State.day++;
@@ -1322,7 +1412,7 @@ function renderStatus(){
   $status().style.display = '';
   const daysLeft = CONFIG.totalDays - State.day + 1;
   const staminaCls = State.stamina < CONFIG.stamina.sickLine ? 'bar-danger' : 'bar-stamina';
-  const mentalCls = State.mental < CONFIG.mentalChoice.tiredLine ? 'bar-danger' : 'bar-mental';
+  const mentalCls = State.mental <= CONFIG.mentalChoice.tiredLine ? 'bar-danger' : 'bar-mental';
   const trustCls = State.trust < CONFIG.trust.weirdLine ? 'bar-danger' : 'bar-trust';
   $status().innerHTML = `
     <div class="st-row">
@@ -1363,6 +1453,8 @@ function render(){
   if (S === 'after') return renderAfter();
   if (S === 'puchi') return renderPuchi();
   if (S === 'skipWork') return renderSkipWork();
+  if (S === 'sunday') return renderSunday();
+  if (S === 'nagashiScold') return renderNagashiScold();
   if (S === 'scold') return renderScold();
   if (S === 'apologize') return renderApologize();
   if (S === 'mission') return renderMission();
@@ -1414,13 +1506,14 @@ function dayWarnings(){
       w.push(`大学の出席 ${State.uniAttended}/${u.need}（1月末までに${u.need}回で進級・残りチャンス${left}日。留年＝学費¥1,000,000が自腹）`);
     }
   }
+  if (isSunday(State.day)) w.push('今日は日曜。お店は休みで、出勤できない（夜は、街へ出る日）');
   const nextLiving = CONFIG.living.days.find(d => d > State.day);
   if (nextLiving && nextLiving - State.day <= 5) w.push(`${dateLabel(nextLiving)} に家賃・生活費 ¥${CONFIG.living.cost.toLocaleString()} の引き落としがある`);
   if (State.trust <= CONFIG.trust.firedLine) w.push('店長の信頼が底をついている。……今夜、呼び出されるかもしれない。');
   if (State.stamina < CONFIG.stamina.noWorkLine) w.push('体が動かない。今夜は出勤できそうにない（強制欠勤＝信頼も下がる）');
   else if (State.stamina < CONFIG.stamina.sickLine) w.push('顔色が悪い。このまま出勤すると熱が出るかもしれない（発熱リスク）');
   if (State.mental <= CONFIG.mentalChoice.brokenLine) w.push('心が限界。今夜卓に着いても、最悪の言葉しか浮かばない');
-  else if (State.mental < CONFIG.mentalChoice.tiredLine) w.push('心が疲れている。接客中、変な一言が口をつきそうだ');
+  else if (State.mental <= CONFIG.mentalChoice.tiredLine) w.push('心が疲れている。接客中、変な一言が口をつきそうだ');
   if (State.trust < CONFIG.trust.weirdLine2) w.push('店長の信頼が低い。いい卓はほとんど回してもらえない');
   else if (State.trust < CONFIG.trust.weirdLine) w.push('店長の信頼が低い。一番いい卓は回してもらえない');
   return w.map(t => `<p class="warn">${esc(t)}</p>`).join('');
@@ -1514,6 +1607,11 @@ function renderMenu(){
 
 // 出勤ボタン群（店長の信頼が低いと、出勤の代わりに謝罪しかできない）
 function workButtons(){
+  // 日曜は店が閉まっている。稼げないかわりに、街へ出る夜がある
+  if (isSunday(State.day)) {
+    return `<div class="hint-box">日曜日。お店はお休み。……夜が、まるまる空いている。</div>
+      <button class="btn btn-primary" onclick="G.toSunday()">🚶 ひとりで街へ出かける</button>`;
+  }
   if (State.trust <= CONFIG.trust.firedLine) {
     return `<div class="hint-box">店からのシフト連絡が、来ていない。……嫌な予感がする。</div>
       <button class="btn btn-primary" onclick="G.toNight()">……店に向かう</button>`;
@@ -1526,6 +1624,50 @@ function workButtons(){
     <button class="btn btn-ghost" onclick="G.toNightNagashi()">流しで出勤する（自動処理・日給${yen(CONFIG.nagashi.wage)}＋α／消耗が軽い／指名関係は進まない）</button>
     <button class="btn btn-ghost" onclick="G.skipWork()">🛏 今日は出勤しない（体力・メンタル大回復／店長の信頼が下がる${State.lastSkipDay === State.day - 1 ? '・連続はさらに冷える' : ''}）</button>`;
 }
+
+// ---- 日曜（店休）：ひとりで街へ ----
+// たまに本指名客と鉢合わせる。店の外で会う客は、店の中の客とは別人だ
+G.toSunday = function(){
+  const honshimeiIds = Object.keys(CUSTOMERS).filter(id => {
+    const cs = State.cust[id];
+    return cs && cs.visits >= 2 && !cs.banned;
+  });
+  if (honshimeiIds.length && Math.random() < CONFIG.sunday.honshimeiChance) {
+    const custId = honshimeiIds[Math.floor(Math.random() * honshimeiIds.length)];
+    State.sunday = { kind: 'honshimei', custId, picked: null };
+  } else {
+    const list = DATA.sundayEvents;
+    State.sunday = { kind: 'town', ev: list[State.sundayIdx % list.length], picked: null };
+    State.sundayIdx++;
+  }
+  State.screen = 'sunday';
+  render();
+};
+
+G.sundayChoice = function(i){
+  const s = State.sunday;
+  const notes = [];
+  const c = s.kind === 'honshimei'
+    ? DATA.sundayHonshimei.choices[i]
+    : s.ev.choices[i];
+  if (c.money)   { State.money += c.money; notes.push(`${yen(c.money)}`); }
+  if (c.mental)  { State.mental  = clampMental(State.mental + c.mental);   notes.push(`メンタル ${c.mental > 0 ? '+' + c.mental : c.mental}`); }
+  if (c.stamina) { State.stamina = clampStamina(State.stamina + c.stamina); notes.push(`体力 ${c.stamina > 0 ? '+' + c.stamina : c.stamina}`); }
+  if (c.aff && s.kind === 'honshimei') {
+    const cs = State.cust[s.custId];
+    cs.affection = clampAff(cs.affection + c.aff);
+    notes.push(`${CUSTOMERS[s.custId].name}の好感度 ${c.aff > 0 ? '+' + c.aff : c.aff}`);
+  }
+  if (c.topic && !State.topics[c.topic]) {
+    State.topics[c.topic] = true;
+    notes.push(`話題の種を仕込んだ：${DATA.topicNames[c.topic]}`);
+  }
+  s.picked = c;
+  s.notes = notes;
+  render();
+};
+
+G.endSunday = function(){ State.sunday = null; endDay(0); };
 
 G.apologize = function(){
   const ap = CONFIG.apologize;
@@ -1665,6 +1807,43 @@ function renderApologize(){
     <div class="story-box">${para(DATA.apologizeScene)}</div>
     <div class="note-box"><p>・店長の信頼 +${State.apologizeResult.gain}（いま ${State.trust}）／メンタル ${CONFIG.apologize.mental}</p><p>・今夜の収入はなし</p></div>
     <button class="btn btn-primary" onclick="G.endApologize()">明日から、やり直す</button>`;
+}
+
+function renderSunday(){
+  const s = State.sunday;
+  const honshimei = s.kind === 'honshimei';
+  const ev = honshimei ? DATA.sundayHonshimei : s.ev;
+  const name = honshimei ? CUSTOMERS[s.custId].name : '';
+  const title = honshimei ? `😳 ${ev.title}` : `🚶 ${ev.title}`;
+  const banner = sceneBanner(honshimei ? null : 'room');
+  const body = honshimei ? ev.text.replace(/\{name\}/g, name) : ev.text;
+
+  if (!s.picked) {
+    $screen().innerHTML = `
+      <h2>${title}</h2>
+      ${banner}
+      <div class="story-box">${para(honshimei ? body : DATA.sundayIntro + '\n\n' + body)}</div>
+      <div class="choices">${ev.choices.map((c, i) =>
+        `<button class="choice" onclick="G.sundayChoice(${i})">${esc(c.label)}</button>`).join('')}</div>`;
+    return;
+  }
+  const notes = s.notes.length
+    ? `<div class="note-box"><p>・${s.notes.join('／')}</p><p>・残高 ${yen(State.money)}</p></div>` : '';
+  $screen().innerHTML = `
+    <h2>${title}</h2>
+    ${banner}
+    <div class="story-box ${honshimei && s.picked.aff < 0 ? 'bad' : ''}">${para(s.picked.react)}</div>
+    ${notes}
+    <button class="btn btn-primary" onclick="G.endSunday()">日曜が、終わる</button>`;
+}
+
+function renderNagashiScold(){
+  const ng = CONFIG.nagashi;
+  $screen().innerHTML = `
+    <h2>😤 閉店後の呼び出し</h2>
+    <div class="story-box bad">${para(DATA.nagashiScoldScene)}</div>
+    <div class="note-box"><p>・店長の信頼 ${ng.scoldTrust}（いま ${State.trust}）／メンタル ${ng.scoldMental}</p></div>
+    <button class="btn btn-primary" onclick="G.endNagashiScold()">……すみません</button>`;
 }
 
 function renderSkipWork(){
@@ -1958,6 +2137,19 @@ function renderMain(){
     </div>
     ${custImage(m)}`;
 
+  // 本指名の入電。逆転裁判の「異議あり！」枠（images/honshimei.webp があればそれを、無ければ文字で）
+  if (m.phase === 'honshimeiCall') {
+    $screen().innerHTML = `
+      <div class="shimei-call" onclick="G.afterHonshimeiCall()">
+        <img class="shimei-img" src="images/honshimei.webp" alt=""
+             onerror="this.parentElement.classList.add('noimg')">
+        <div class="shimei-text"><span>本指名が</span><span>入りました！</span></div>
+        <p class="shimei-who">${esc(cust.name)}　様</p>
+      </div>
+      <button class="btn btn-primary" onclick="G.afterHonshimeiCall()">フロアへ出る</button>`;
+    return;
+  }
+
   if (m.phase === 'mainIntro') {
     $screen().innerHTML = `${header}
       ${m.firstMeet ? `<p class="cust-intro">${esc(cust.intro)}</p>` : ''}
@@ -2055,13 +2247,17 @@ function renderMain(){
   }
 
   if (m.phase === 'onedari') {
+    const body = m.encore
+      ? `<p>1本目が、まだ半分残っている。……でも、この人の機嫌はまだ上を向いている。</p>
+         <p class="onedari-note">（正解を続けて開いた"2本目の窓"。欲を出すか、きれいに終わるか）</p>`
+      : `<p>……今、いける気がする？　それとも、まだ？</p>
+         <p class="onedari-note">（場内は${CONFIG.serve.jonaiRallies}ラリーで終了。待ちすぎたら今夜はゼロ）</p>`;
     $screen().innerHTML = `${header}
       <p class="turn-no">${stageLabel(m)} 終わり</p>
-      <div class="story-box"><p>……今、いける気がする？　それとも、まだ？</p>
-      <p class="onedari-note">（場内は${CONFIG.serve.jonaiRallies}ラリーで終了。待ちすぎたら今夜はゼロ）</p></div>
+      <div class="story-box">${body}</div>
       <div class="choices">
-        <button class="choice" onclick="G.onedari(true)">おねだりする</button>
-        <button class="choice" onclick="G.onedari(false)">まだ待つ</button>
+        <button class="choice" onclick="G.onedari(true)">${m.encore ? 'もう一本、おねだりする' : 'おねだりする'}</button>
+        <button class="choice" onclick="G.onedari(false)">${m.encore ? 'これ以上は言わない' : 'まだ待つ'}</button>
       </div>`;
     return;
   }
@@ -2077,9 +2273,11 @@ function renderMain(){
   if (m.phase === 'tableEnd') {
     const summary = m.exploded
       ? '<p>卓は、最悪の形で終わった。</p>'
-      : m.sold
-        ? '<p>ボトルの入った、いい卓だった。</p>'
-        : '<p>ボトルは入らなかった。今日はこんなもんか。</p>';
+      : (m.soldCount || 0) >= 2
+        ? '<p>ボトルが2本。……こんな夜が、月に何度かあればいいのに。</p>'
+        : m.sold
+          ? '<p>ボトルの入った、いい卓だった。</p>'
+          : '<p>ボトルは入らなかった。今日はこんなもんか。</p>';
     $screen().innerHTML = `${header}
       <div class="story-box">${summary}</div>
       <button class="btn btn-primary" onclick="G.endTable()">次の卓へ</button>`;
