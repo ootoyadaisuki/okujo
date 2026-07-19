@@ -168,6 +168,7 @@ G.newGame = function(){
     loseReason: null,
     cust,
     night: null,
+    scene: null, day1EndSeen: false, day3StartSeen: false,   // 一枚絵つきの語りシーン（各1回だけ）
     lightDeck: null, lightPos: 0, weirdDeck: null, weirdPos: 0,  // 永続デッキ（引き切るまで重複なし）
   });
   recalcLooks();
@@ -529,6 +530,11 @@ function startNight(){
   State.screen = 'night';
   if (State.day === 1) { State.night.showIntro = true; State.night.tutorialIdx = 0; }
   nextTable();
+  // 研修明けの初日は、接客に入る前にレイナが背中を押してくれる
+  if (State.day === CONFIG.tutorial.helpDays + 1 && !State.day3StartSeen && State.screen === 'night') {
+    State.day3StartSeen = true;
+    playScene('day3Start', () => { State.screen = 'night'; render(); });
+  }
 }
 
 // 一見/モブ卓・変な客卓は「引き切るまで重複なし」の永続デッキから配る（尽きたら再シャッフル）
@@ -1071,6 +1077,12 @@ G.toNextDay = function(){
   State.stamina = clampStamina(State.stamina + CONFIG.stamina.morning);
   State.mental = clampMental(State.mental + CONFIG.stamina.mentalMorning);
   State.night = null;
+  // 初日の閉店後だけ、レイナのねぎらい＋昼パートの説明を挟む（endDayで日付は+1済み＝いまDay2）
+  if (State.day === 2 && !State.day1EndSeen) {
+    State.day1EndSeen = true;
+    playScene('day1End', enterDay);
+    return;
+  }
   enterDay();
 };
 
@@ -1327,6 +1339,7 @@ function render(){
   const S = State.screen;
   if (S === 'title') return renderTitle();
   if (S === 'intro') return renderIntro();
+  if (S === 'scene') return renderScene();
   if (S === 'day') return renderDay();
   if (S === 'seikeiPart') return renderSeikeiPart();
   if (S === 'seikeiClinic') return renderSeikeiClinic();
@@ -1750,6 +1763,44 @@ function renderNight(){
   if (n.current.kind === 'light') return renderLight();
   return renderMain();
 }
+
+// ---- 一枚絵つきの語りシーン（DATA.scenes を1ページずつ送る）----
+// 終わったら State.scene.after に積んだ続き先へ渡す
+function playScene(id, after){
+  State.scene = { id, idx: 0, after };
+  State.screen = 'scene';
+  render();
+}
+
+function renderScene(){
+  const sc = DATA.scenes[State.scene.id];
+  const i = State.scene.idx;
+  const pg = sc.pages[i];
+  const last = i >= sc.pages.length - 1;
+  const visual = pg.who === 'senpai'
+    ? `<div class="cust-head">
+         <span class="cust-name">💄 ${esc(DATA.senpai.title)}</span>
+       </div>
+       <div class="cust-visual">
+         <img src="images/${DATA.senpai.id}.webp" alt="" onerror="this.parentElement.classList.add('noimg')">
+         <span class="visual-fallback">（${esc(DATA.senpai.name)} の画像）</span>
+       </div>`
+    : '';
+  $screen().innerHTML = `
+    <h2>${esc(sc.title)}</h2>
+    ${visual}
+    <p class="turn-no">${i + 1} / ${sc.pages.length}</p>
+    <div class="story-box ${pg.who ? 'cust-line' : 'monologue'}">${para(pg.text)}</div>
+    <button class="btn btn-primary" onclick="G.sceneNext()">${last ? '▶' : '▼'}</button>`;
+}
+
+G.sceneNext = function(){
+  const sc = DATA.scenes[State.scene.id];
+  if (State.scene.idx < sc.pages.length - 1) { State.scene.idx++; render(); return; }
+  const after = State.scene.after;
+  State.scene = null;
+  after();
+};
 
 // 初出勤の夜、先輩キャバ嬢が遊び方を教えてくれる（1ページずつ送る）
 function renderTutorial(){

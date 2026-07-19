@@ -36,6 +36,12 @@ html, body {
 .st-bars { margin-top: 4px; }
 .st-meter { display: flex; align-items: center; gap: 4px; color: var(--dim); font-size: 12px; }
 .st-bars .bar { width: 72px; }
+.story-box.monologue {
+  border-color: #4a3a6b;
+  background: linear-gradient(160deg, #1c1230, #241a3a);
+  font-style: italic;
+  color: #d8cfe8;
+}
 .help-note { color: #b0a8bd; font-size: 12px; margin: 2px 2px 6px; }
 .mind-hint { color: #b39ddb; font-size: 13px; font-style: italic; margin: 4px 2px; }
 
