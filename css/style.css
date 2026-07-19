@@ -246,3 +246,18 @@ h2 { font-size: 18px; margin: 16px 0 8px; }
   text-align: center;
   line-height: 1.6;
 }
+
+/* ---- 場面の背景画像（横長。読み込めなければ枠ごと非表示） ---- */
+.scene-visual {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  overflow: hidden;
+  margin: 0 0 12px;
+}
+.scene-visual img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}

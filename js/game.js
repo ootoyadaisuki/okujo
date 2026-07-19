@@ -303,9 +303,16 @@ G.pickDay = function(id){
     notes.push(`さらにメンタル +${CONFIG.day.rest.kareshiBonus}`);
   }
 
-  State.dayResult = { notes, story };
+  State.dayResult = { notes, story, scene: id === 'uni' ? 'uni_class' : (id === 'rest' ? 'rest' : null) };
   State.screen = 'dayResult';
   render();
+};
+
+// 昼メニュー項目→シーン画像の対応
+const MENU_ITEM_SCENE = {
+  run: 'kintore_run', gym: 'kintore_gym', personal: 'kintore_gym',
+  manga: 'dokusho', jiko: 'dokusho', shosetsu: 'dokusho', shinbun: 'dokusho',
+  genba: 'genba', karaoke: 'karaoke', eiga: 'eiga', cafe: 'cafe',
 };
 
 // メニュー項目の確定
@@ -322,7 +329,7 @@ G.pickMenu = function(i){
   else if (o.id === 'genba') { story = DATA.genbaScenes[State.genbaIdx % DATA.genbaScenes.length]; State.genbaIdx++; }
   else                       { story = (DATA[cmd + 'Scenes'] || {})[o.id] || ''; }
 
-  State.dayResult = { notes, story };
+  State.dayResult = { notes, story, scene: MENU_ITEM_SCENE[o.id] || null };
   State.screen = 'dayResult';
   render();
 };
@@ -360,7 +367,7 @@ G.pickSeikeiClinic = function(i){
     State.seikeiBuzz = { ok: false, label: info.label };  // 腫れは、卓からも見える
     story = `${c.name}。${info.menu}──腫れが、引かない。\n\n「個人差がありますので」と受付は言った。返金の話は、しなかった。\n鏡は、しばらく見たくない。`;
   }
-  State.dayResult = { notes, story };
+  State.dayResult = { notes, story, scene: 'seikei' };
   State.screen = 'dayResult';
   render();
 };
@@ -1387,6 +1394,7 @@ function renderIntro(){
   const last = State.introIdx >= DATA.intro.length - 1;
   // 初日は昼パートなし＝決意したその夜に初出勤。昼メニューはDay2の朝から
   $screen().innerHTML = `
+    ${sceneBanner('intro_oshi')}
     <div class="story-box">${para(DATA.intro[State.introIdx])}</div>
     <button class="btn btn-primary" onclick="${last ? 'G.toNight()' : 'State.introIdx++;render()'}">${last ? '🌙 初出勤へ' : '▼'}</button>`;
 }
@@ -1433,6 +1441,7 @@ function renderDay(){
   const topicLine = topicList.length ? `<p class="mood-read">🌱 仕込んである話題の種：${topicList.join('・')}</p>` : '';
   $screen().innerHTML = `
     <h2>☀️ 昼</h2>
+    ${sceneBanner('room')}
     <p>今日、なにをする？</p>${topicLine}${dayWarnings()}
     <div class="cmd-grid">${cmds}</div>`;
 }
@@ -1447,6 +1456,7 @@ function renderSeikeiPart(){
   }).join('');
   $screen().innerHTML = `
     <h2>💉 プチ整形</h2>
+    ${sceneBanner('seikei')}
     <p>どこをプチ整形しますか？<small>（容姿＝6パーツの平均。いま ${State.stats.looks}）</small></p>
     <div class="cmd-grid">${rows}</div>
     <button class="btn btn-ghost" onclick="G.cancelSub()">やっぱりやめる</button>`;
@@ -1461,6 +1471,7 @@ function renderSeikeiClinic(){
   }).join('');
   $screen().innerHTML = `
     <h2>💉 ${info.label}（${info.menu}）</h2>
+    ${sceneBanner('seikei')}
     <p>どのクリニックに行きますか？</p>
     <p class="onedari-note">（失敗すると効果なし・体力${CONFIG.seikei.failStamina}のダウンタイム。お金は返ってこない）</p>
     <div class="cmd-grid cmd-grid-1">${rows}</div>
@@ -1492,8 +1503,10 @@ function renderMenu(){
     return `<button class="cmd cmd-wide" ${disabled ? 'disabled' : ''} onclick="G.pickMenu(${i})">
       <b>${esc(o.label)}</b><small>${menuOptionDesc(o)}</small></button>`;
   }).join('');
+  const menuScene = { kintore: 'kintore_gym', dokusho: 'dokusho' }[cmd];
   $screen().innerHTML = `
     <h2>${meta.icon} ${meta.title}</h2>
+    ${sceneBanner(menuScene)}
     <p>どれにする？<small>（${subs[cmd]}）</small></p>
     <div class="cmd-grid cmd-grid-1">${rows}</div>
     <button class="btn btn-ghost" onclick="G.cancelSub()">やっぱりやめる</button>`;
@@ -1528,6 +1541,7 @@ G.endApologize = function(){ endDay(0); };
 function renderDayResult(){
   const r = State.dayResult;
   $screen().innerHTML = `
+    ${sceneBanner(r.scene)}
     ${r.story ? `<div class="story-box">${para(r.story)}</div>` : ''}
     <div class="note-box">${r.notes.map(n => `<p>・${esc(n)}</p>`).join('')}</div>
     ${dayWarnings()}
@@ -1536,6 +1550,7 @@ function renderDayResult(){
 
 function renderForcedRest(){
   $screen().innerHTML = `
+    ${sceneBanner('rest')}
     <div class="story-box"><p>着替えようとして、腕が上がらなかった。</p><p>店に「体調不良」とだけ送って、ベッドに沈む。今日の売上はゼロ。……店長からの返信は、スタンプ1個だった。</p></div>
     <div class="note-box"><p>・体力 +${CONFIG.forcedRest.stamina}／メンタル +${CONFIG.forcedRest.mental}</p><p>・店長の信頼 ${CONFIG.trust.absent}（欠勤）</p></div>
     <button class="btn btn-primary" onclick="G.endForcedRest()">目を閉じる</button>`;
@@ -1544,6 +1559,7 @@ function renderForcedRest(){
 function renderSick(){
   $screen().innerHTML = `
     <h2>🤒 発熱</h2>
+    ${sceneBanner('sick')}
     <div class="story-box">${para(DATA.sickScene)}</div>
     <div class="note-box"><p>・${CONFIG.stamina.sickDays}日間、出勤できない</p><p>・店長の信頼 ${CONFIG.trust.sick}（病欠）</p></div>
     <button class="btn btn-primary" onclick="G.endSick()">布団に沈む</button>`;
@@ -1563,13 +1579,17 @@ function renderUniEvent(){
     <button class="btn btn-primary" onclick="G.endUniEvent()">${ev === 'ryunen' ? '……それでも、夜は来る' : '通話を切る'}</button>`;
 }
 
+const HOLIDAY_SCENE = { 12: 'omisoka', 13: 'jikka', 14: 'hatsumode' };
+
 function renderHoliday(){
   const h = DATA.holidays[State.day];
+  const banner = sceneBanner(HOLIDAY_SCENE[State.day]);
   const notes = State.holidayNotes.length
     ? `<div class="note-box">${State.holidayNotes.map(n => `<p>・${esc(n)}</p>`).join('')}</div>` : '';
   if (h.choice && !State.holidayPicked) {
     $screen().innerHTML = `
       <h2>${esc(h.title)}</h2>
+      ${banner}
       <div class="story-box">${para(h.scene)}</div>
       <div class="choices">${h.choice.map((c, i) =>
         `<button class="choice" onclick="G.holidayChoice(${i})">${esc(c.label)}</button>`).join('')}</div>`;
@@ -1578,6 +1598,7 @@ function renderHoliday(){
   const picked = State.holidayPicked;
   $screen().innerHTML = `
     <h2>${esc(h.title)}</h2>
+    ${banner}
     <div class="story-box">${para(picked ? picked.scene : h.scene)}</div>
     ${notes}
     <button class="btn btn-primary" onclick="G.endHoliday()">${esc(h.next || '眠る')}</button>`;
@@ -1650,6 +1671,7 @@ function renderSkipWork(){
   const r = State.skipResult;
   $screen().innerHTML = `
     <h2>🛏 希望休</h2>
+    ${sceneBanner('rest')}
     <div class="story-box">${para(r.scene)}</div>
     <div class="note-box"><p>・体力 +${r.st}／メンタル +${r.me}</p><p>・店長の信頼 ${r.dTrust}（いま ${State.trust}）</p></div>
     <button class="btn btn-primary" onclick="G.endSkipWork()">布団に、沈む</button>`;
@@ -1673,6 +1695,7 @@ function renderAfter(){
   if (State.afterResult) {
     $screen().innerHTML = `
       <h2>🌃 閉店後</h2>
+      ${sceneBanner('after')}
       <div class="story-box">${para(State.afterResult.text)}</div>
       <div class="note-box"><p>・${esc(State.afterResult.note)}</p></div>
       <button class="btn btn-primary" onclick="G.endAfter()">帰って、寝る</button>`;
@@ -1680,6 +1703,7 @@ function renderAfter(){
   }
   $screen().innerHTML = `
     <h2>🌃 アフターのお誘い</h2>
+    ${sceneBanner('after')}
     <div class="story-box">${para(`閉店後、着替えて裏口を出ると、今夜の卓の${g.job}・${g.name}さんが待っていた。\n\n「お疲れさま。……このあと、ラーメンでもどう？」`)}</div>
     <div class="choices">
       <button class="choice" onclick="G.afterChoice(0)">「行きます。ラーメン、付き合っちゃいます」（体力・メンタルを消耗）</button>
@@ -1746,6 +1770,7 @@ function renderNight(){
     n.showIntro = false;
     $screen().innerHTML = `
       <h2>🌙 初出勤</h2>
+      ${sceneBanner('mensetsu')}
       <div class="story-box">${para(DATA.firstNightIntro)}</div>
       <button class="btn btn-primary" onclick="render()">フロアへ</button>`;
     return;
@@ -1755,6 +1780,7 @@ function renderNight(){
     n.eventShown = true;
     $screen().innerHTML = `
       <h2>🎄 ${esc(n.eventLabel)}</h2>
+      ${sceneBanner('club')}
       <div class="story-box">${para(DATA.nightEventScenes[State.day] || '')}</div>
       <div class="note-box"><p>・今夜はドリンクバック×${n.drinkMult}</p></div>
       <button class="btn btn-primary" onclick="render()">フロアへ</button>`;
@@ -1891,6 +1917,13 @@ function stageBadge(m){
   }
   if (inTutorial()) return '<span class="cust-badge badge-help">ヘルプ</span>';  // 研修中は先輩の卓に付くだけ
   return '<span class="cust-badge badge-free">フリー</span>';       // 一見・変な客は常にフリー
+}
+
+// 場面の背景画像：images/scene_{id}.webp（主人公の姿は出さない背景美術）
+// 画像が無ければ枠ごと非表示になる
+function sceneBanner(id){
+  if (!id) return '';
+  return `<div class="scene-visual"><img src="images/scene_${id}.webp" alt="" onerror="this.parentElement.style.display='none'"></div>`;
 }
 
 // 客の画像ファイル名：images/{客id}_{表情}.webp（fu=普/kou=好/ken=険/explosion=爆発）
