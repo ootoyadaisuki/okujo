@@ -159,7 +159,7 @@ const CONFIG = {
   trust: {
     max: 100,
     jonai: 3,               // 場内指名を取る
-    bottle: { spark: 2, champagne: 4, donperi: 8, roze: 12 },  // ボトルを入れる
+    bottle: { entry: 2, middle: 4, high: 8, elite: 12 },  // ボトルを入れる
     perNight: 1,            // 皆勤（1晩働き切る）
     absent: -8,             // 欠勤（強制休養）
     sick: -10,              // 病欠（2日分まとめて）
@@ -301,13 +301,51 @@ const CONFIG = {
     drinkBack: 400,         // ドリンクバック 1杯（相場100〜500円）
     jonaiBack: 1000,        // 場内指名バック（相場500〜1,000円/回）
     honshimeiBack: 1500,    // 本指名バック（相場1,000〜2,000円/回。2回目以降の来店に付く）
-    bottleBackRate: 0.22,   // ボトルバック率（相場15〜35%。うちの店は歩合厚め）
-    bottlePrice: {          // ボトルの店頭価格（八王子価格）
-      spark: 20000,         // スパークリング
-      champagne: 80000,     // シャンパン
-      donperi: 200000,      // ドンペリ級（この店では伝説の1本）
-      roze: 400000,         // ドンペリロゼ級（ドンペリ3本目からの太客だけが開ける、その上）
+    bottleBackRate: 0.30,   // ボトルバック率（相場15〜35%。うちの店は歩合厚め）
+    // ボトルの店頭価格（八王子価格）。おねだりはここから4本が提示される。
+    // 階級は値段で分けてある。最上級（15万〜）は、通い込んで雑用までこなした相手にしか出せない。
+    drinks: {
+      entry: [
+        { name: 'カフェパ',       price:  20000 },
+        { name: '天使のロッソ',   price:  22500 },
+        { name: 'モエ白',         price:  25000 },
+        { name: 'マバム',         price:  25000 },
+        { name: 'ヴーヴイエロー', price:  32500 },
+        { name: 'モエピン',       price:  35000 },
+        { name: 'ヴーヴホワイト', price:  35000 },
+        { name: 'ヴーヴロゼ',     price:  38000 },
+      ],
+      middle: [
+        { name: 'ニル',           price:  46000 },
+        { name: 'ローランロゼ',   price:  50000 },
+        { name: 'ドン白',         price:  55000 },
+        { name: 'ペリエロゼ',     price:  55000 },
+        { name: 'ベルエポ',       price:  60000 },
+        { name: 'ソウメイ白',     price:  70000 },
+        { name: 'クリュッグ',     price:  70000 },
+        { name: 'ルミナス',       price:  75000 },
+      ],
+      high: [
+        { name: 'ピンドン',       price: 110000 },
+        { name: 'ベルロゼ',       price: 135000 },
+        { name: 'クリスタル',     price: 135000 },
+      ],
+      elite: [
+        { name: 'クリュッグロゼ',         price: 160000 },
+        { name: 'アルマンド',             price: 165000 },
+        { name: '光るエンジェル',         price: 170000 },
+        { name: 'エンジェルピンク／ブルー', price: 210000 },
+        { name: 'アルマンドピンク',       price: 220000 },
+      ],
     },
+    // 提示される4本の階級の混ざり方。序盤はエントリー中心、後半ほど上が増える。
+    // day は「その日以降この重みを使う」。重みは entry / middle / high / elite の順。
+    drinkMix: [
+      { fromDay:  1, w: [70, 25,  5,  0] },
+      { fromDay: 25, w: [50, 33, 14,  3] },
+      { fromDay: 45, w: [33, 34, 22, 11] },
+      { fromDay: 65, w: [22, 31, 28, 19] },
+    ],
     ralliesPerDrink: 2,     // 何ラリーごとに客がドリンクを1杯入れてくれるか（卓の長さ＝杯数）
     // モブ卓の気まぐれ注文（最終ラリーまで盛り上げた卓で、たまに入る。モブでも油断させない）
     mobOrder: {
@@ -333,14 +371,14 @@ const CONFIG = {
     jonaiRallies: 5,        // 場内指名成立で追加されるラリー数
 
     // 好感度の増減（トーク力・容姿で補正）
-    seikaiBase: 8,          // 正解: 8 + floor(トーク/15)（一晩で太客化しない伸び幅）
-    bondaT1: 6,             // 凡打: T1はほぼ正解並みに効く
-    bondaMid: 3,            //       T2〜T3
+    seikaiBase: 6,          // 正解: 8 + floor(トーク/15)（一晩で太客化しない伸び幅）
+    bondaT1: 4,             // 凡打: T1はほぼ正解並みに効く
+    bondaMid: 2,            //       T2〜T3
     bondaLate: 1,           //       T4〜T5は失速（学習曲線）
-    hazureBase: -10,        // ハズレ: 容姿で軽減 floor(容姿/15)、最大でも-3まで
-    hazureFloor: -3,
-    jiraiBase: -25,         // 地雷: 容姿で軽減 floor(容姿/12)、最大でも-15まで
-    jiraiFloor: -15,
+    hazureBase: -6,        // ハズレ: 容姿で軽減 floor(容姿/15)、最大でも-3まで
+    hazureFloor: -2,
+    jiraiBase: -15,         // 地雷: 容姿で軽減 floor(容姿/12)、最大でも-15まで
+    jiraiFloor: -10,
 
     // メンタル消費（凡打で流すのは安く、刺しにいくと削れる。フル出勤1晩で-40前後になる調整）
     mentalSeikai: -2,       // 正解でも削れる
@@ -362,16 +400,31 @@ const CONFIG = {
     nadameru: { affection: -15, mental: -20 },
 
     // おねだり（場内指名後のみ・場内2ラリー目以降の毎ターン終わりに判断）
+    // 4本の中から自分で選ぶ。高い方を狙うか、確実に入る方で手を打つか＝この卓の駆け引き。
     onedari: {
       fromJonaiTurn: 2,
-      sparkLine: 72,
-      champagneLine: 93,        // ほぼ完璧な接客の到達点
-      donperiLine: 99,          // ＋機嫌〈好〉が条件（通い込んだ太客の節目でしか出ない伝説枠）
-      failAffection: -15,       // 失敗: 好感度-15＋機嫌一段悪化（爆発の導火線）
-      // 成功後の反動。スパークリング・シャンパンでは冷めない（気持ちよく入れてもらった夜は、そのまま続く）
-      cashInDrop: { spark: 0, champagne: 0, donperi: -50, roze: -60 },
+      failAffection: -15,       // 1段上を外した: 好感度-15＋機嫌一段悪化（爆発の導火線）
+      failAffectionFar: -24,    // 2段以上うわずった: 身の程を知らない、と受け取られる
+      // 成功後の反動。安い階級では冷めない（気持ちよく入れてもらった夜は、そのまま続く）
+      cashInDrop: { entry: 0, middle: 0, high: -50, elite: -60 },
       maxPerTable: 2,           // 1卓で入れてもらえる上限（2本目まで）
       encoreStreak: 2,          // 1本目のあと、正解をこれだけ続けたら2本目の窓が開く
+      choices: 4,               // 一度に提示する銘柄数
+      hintGap: 20000,           // 通る中で一番高い銘柄より、これ以上安いものを選ぶと「それでいいのか」と諭される
+      // ハイクラス以上は好感度だけでは開かない。関係値 = 本指名の来店回数 + 雑用の達成数×2
+      //   好感度＝今夜の温度／関係値＝積み上げてきたもの。一夜の運で最上位に届かせない。
+      bondPerMission: 2,
+    },
+
+    // ---- シャンパンの階級と開栓条件 ----
+    // aff  : その客の好感度がこれ以上
+    // bond : 関係値（来店回数＋雑用×2）がこれ以上
+    // mood : 機嫌が〈好〉であること
+    drinkClass: {
+      entry:  { label: 'エントリー', aff: 60, bond: 0, mood: false },
+      middle: { label: 'ミドル',     aff: 75, bond: 0, mood: false },
+      high:   { label: 'ハイ',       aff: 90, bond: 3, mood: false },
+      elite:  { label: '最上級',     aff: 95, bond: 6, mood: true  },
     },
   },
 

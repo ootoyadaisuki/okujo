@@ -59,8 +59,6 @@ function faceOf(m){
   if (t === 0) return 'fu';
   return (t > 0 ? 'p' : 'm') + Math.abs(t);
 }
-const TIER_NAME = { spark:'スパークリング', champagne:'シャンパン', donperi:'ドンペリ級', roze:'ドンペリロゼ級' };
-const TIER_ORDER = ['spark','champagne','donperi','roze'];
 
 const State = {};
 const G = {}; // onclick用の窓口
@@ -121,13 +119,18 @@ G.continueGame = function(){
   if (State.sunday === undefined) State.sunday = null;
   for (const id of Object.keys(CUSTOMERS)) {
     if (!State.cust[id]) {
-      State.cust[id] = { affection: CONFIG.serve.affectionStart, banned: false, met: false, epIdx: 0, lastVisit: 0, visits: 0, lastSuccess: false, missionIdx: 0, donperiCount: 0 };
+      State.cust[id] = { affection: CONFIG.serve.affectionStart, banned: false, met: false, epIdx: 0, lastVisit: 0, visits: 0, lastSuccess: false, missionIdx: 0, donperiCount: 0, flags: [], usedFirst: [], usedJonai: [], usedPairs: [], jonaiCount: 0 };
     } else {
       const c = State.cust[id];
       if (c.visits == null) c.visits = 0;
       if (c.lastSuccess == null) c.lastSuccess = false;
       if (c.missionIdx == null) c.missionIdx = 0;
       if (c.donperiCount == null) c.donperiCount = 0;
+      if (!Array.isArray(c.flags)) c.flags = [];
+      if (!Array.isArray(c.usedFirst)) c.usedFirst = [];
+      if (!Array.isArray(c.usedJonai)) c.usedJonai = [];
+      if (!Array.isArray(c.usedPairs)) c.usedPairs = [];
+      if (c.jonaiCount == null) c.jonaiCount = 0;
     }
   }
   State.night = null;
@@ -140,7 +143,7 @@ G.continueGame = function(){
 G.newGame = function(){
   const cust = {};
   for (const id of Object.keys(CUSTOMERS)) {
-    cust[id] = { affection: CONFIG.serve.affectionStart, banned: false, met: false, epIdx: 0, lastVisit: 0, visits: 0, lastSuccess: false, missionIdx: 0, donperiCount: 0 };
+    cust[id] = { affection: CONFIG.serve.affectionStart, banned: false, met: false, epIdx: 0, lastVisit: 0, visits: 0, lastSuccess: false, missionIdx: 0, donperiCount: 0, flags: [], usedFirst: [], usedJonai: [], usedPairs: [], jonaiCount: 0 };
   }
   Object.assign(State, {
     screen: 'intro', introIdx: 0,
@@ -521,15 +524,96 @@ function custActive(id){
 // 研修期間：最初の2日は先輩のヘルプ。モブ卓だけを回され、場内指名も起きない
 function inTutorial(){ return State.day <= CONFIG.tutorial.helpDays; }
 
+// ---- 会話ユニットの選択（フラグ層）------------------------------------
+// episodes[] の first / jonai は、それぞれ独立した「会話ユニット」として扱う。
+//   needs: このユニットを出す前に、客が知っていなければならない話の種
+//   gives: このユニットを演じ切ると立つ種
+//   once : 一度きり（初対面の探りなど、二度と再生してはいけないもの）
+//   bindFirst: その夜の探りユニットと対になっているとき、相手の id を書く（例：企画書を見せた夜の場内）
+// これで「まだ聞いていない話を前提に喋る」事故と、
+// 「15回通った客が"君、新しい子？"と言い出す」再演事故の両方を防ぐ。
+function unitsOf(cust, kind){
+  cust._units = cust._units || {};
+  if (cust._units[kind]) return cust._units[kind];
+  const list = [];
+  cust.episodes.forEach((ep, i) => {
+    const rallies = ep[kind];
+    if (!rallies || !rallies.length) return;
+    const meta = (kind === 'first' ? ep.firstMeta : ep.jonaiMeta) || {};
+    list.push({
+      id: meta.id || `${cust.id}_${kind}${i + 1}`,
+      needs: meta.needs || [], gives: meta.gives || [], once: !!meta.once,
+      bindFirst: meta.bindFirst || null, desc: ep.desc, rallies,
+    });
+  });
+  cust._units[kind] = list;
+  return list;
+}
+
+function unitEligible(u, cs, used, firstId){
+  if (u.once && used.includes(u.id)) return false;
+  if (u.bindFirst && u.bindFirst !== firstId) return false;
+  return u.needs.every(f => cs.flags.includes(f));
+}
+
+const pairKey = (fid, jid) => fid + '+' + jid;
+
+// その探りユニットに、まだ演じていない「探り＋場内」の組み合わせが残っているか。
+// 探りと場内をそれぞれ独立に一巡させると、両者が足並みを揃えて回ってしまい、
+// 7本×7本あっても7通りの夜しか出てこない。組み合わせで数えるのはそれを避けるため。
+function hasFreshPair(cust, cs, f){
+  return unitsOf(cust, 'jonai').some(j =>
+    unitEligible(j, cs, cs.usedJonai, f.id) && !cs.usedPairs.includes(pairKey(f.id, j.id)));
+}
+
+// 未見のものを物語順に優先。全部見たら、まだ出していない組み合わせを作れるものを優先し、
+// それも尽きたら、再演可能なものの中でいちばん昔に見たものを回す
+function pickUnit(cust, kind, cs, firstId){
+  const used = kind === 'first' ? cs.usedFirst : cs.usedJonai;
+  const ok = unitsOf(cust, kind).filter(u => unitEligible(u, cs, used, firstId));
+  if (!ok.length) return null;
+  const bound = ok.filter(u => u.bindFirst);   // 今夜の探りと対になっている話が最優先
+  if (bound.length) return bound[0];
+  const fresh = ok.filter(u => !used.includes(u.id));
+  if (fresh.length) return fresh[0];
+  const lru = ok.slice().sort((a, b) => used.indexOf(a.id) - used.indexOf(b.id));
+  const novel = kind === 'jonai'
+    ? lru.filter(j => !cs.usedPairs.includes(pairKey(firstId, j.id)))
+    : lru.filter(f => hasFreshPair(cust, cs, f));
+  return (novel.length ? novel : lru)[0];
+}
+
+// ユニットを実際に演じたときに呼ぶ：使用済みに記録し、話の種を立てる
+function consumeUnit(cust, kind, cs, u, firstId){
+  if (!u) return;
+  const used = kind === 'first' ? cs.usedFirst : cs.usedJonai;
+  const at = used.indexOf(u.id);
+  if (at >= 0) used.splice(at, 1);   // 再演したら最後尾へ（＝次はいちばん昔のものが回る）
+  used.push(u.id);
+  if (kind === 'jonai' && firstId) {
+    const key = pairKey(firstId, u.id);
+    const pat = cs.usedPairs.indexOf(key);
+    if (pat >= 0) cs.usedPairs.splice(pat, 1);
+    cs.usedPairs.push(key);
+  }
+  u.gives.forEach(f => { if (!cs.flags.includes(f)) cs.flags.push(f); });
+}
+
+// まだ一度も見ていない探りユニットが残っているか（＝新しい話ができる客か）
+function hasFreshTalk(id){
+  const cs = State.cust[id];
+  return unitsOf(CUSTOMERS[id], 'first')
+    .some(u => !cs.usedFirst.includes(u.id) && u.needs.every(f => cs.flags.includes(f)));
+}
+
 function pickMains(){
   if (inTutorial()) return { mains: [], weird: 0 };   // 上級客は回ってこない＝場内指名も発生しない
   if (State.trust < CONFIG.trust.weirdLine2) return { mains: [], weird: 2 };
   if (State.trust < CONFIG.trust.weirdLine)  return { mains: [], weird: 1 };
-  let cands = Object.keys(CUSTOMERS).filter(id =>
-    custActive(id) && State.cust[id].epIdx < CUSTOMERS[id].episodes.length);
-  // 新しい話が尽きたら、来店が古い客から再登場（エピソードは頭から再演＝コンテンツ追加待ち）
+  let cands = Object.keys(CUSTOMERS).filter(id => custActive(id) && hasFreshTalk(id));
+  // 新しい話が尽きたら、来店が古い客から再登場（再演可能なユニットだけが回る）
   if (cands.length === 0) cands = Object.keys(CUSTOMERS).filter(id =>
-    custActive(id) && CUSTOMERS[id].episodes.length > 0);
+    custActive(id) && pickUnit(CUSTOMERS[id], 'first', State.cust[id]));
   cands.sort((a, b) => (State.cust[a].lastVisit || 0) - (State.cust[b].lastVisit || 0));
   return { mains: cands.slice(0, CONFIG.mainsPerNight), weird: 0 };
 }
@@ -649,7 +733,8 @@ function nextTable(){
   } else {
     const cust = CUSTOMERS[kind.split(':')[1]];
     const cs = State.cust[cust.id];
-    const episode = cust.episodes[cs.epIdx % cust.episodes.length];
+    const firstUnit = pickUnit(cust, 'first', cs);
+    consumeUnit(cust, 'first', cs, firstUnit);
     cs.epIdx++;
     cs.lastVisit = State.day;
     cs.visits = (cs.visits || 0) + 1;
@@ -659,7 +744,8 @@ function nextTable(){
       const base = CONFIG.serve.affectionStart;
       cs.affection = clampAff(Math.round(base + (cs.affection - base) * CONFIG.serve.carryOver));
     }
-    n.current = { kind: 'main', cust, episode,
+    // 場内ユニットは「場内に入った瞬間」に選ぶ。探りで立った話の種を、その場で条件に使えるように
+    n.current = { kind: 'main', cust, firstUnit, jonaiUnit: null,
       honshimei: cs.visits >= 2,   // 2回目以降の来店＝本指名（あなたに会いに来ている）
       stage: 'first',   // 'first'=探り（フリー接客）→ 'jonai'=場内指名後
       turn: 0, correct: 0, rallies: 0, drinksSettled: false,
@@ -747,7 +833,8 @@ G.nextTable = function(){ nextTable(); };
 
 // ---- 意味のある卓 ----
 function turnData(m){
-  return (m.stage === 'first' ? m.episode.first : m.episode.jonai)[m.turn];
+  const u = m.stage === 'first' ? m.firstUnit : m.jonaiUnit;
+  return u.rallies[m.turn];
 }
 function rallyNo(m){
   return m.stage === 'first' ? m.turn + 1 : CONFIG.serve.firstRallies + m.turn + 1;
@@ -938,6 +1025,7 @@ G.afterReact = function(){
     || ((m.soldCount || 0) < od.maxPerTable && (m.streakSinceSale || 0) >= od.encoreStreak);
   if (m.stage === 'jonai' && (m.turn + 1) >= od.fromJonaiTurn && canOnedari) {
     m.encore = !!m.sold;
+    m.offer = buildOffer(m);
     m.phase = 'onedari';
   } else {
     advanceTurn();
@@ -955,6 +1043,24 @@ G.afterTopic = function(){
   render();
 };
 
+// 場内に入る：この時点で場内ユニットを選ぶ（探りで立った種を条件に使える）
+function enterJonai(m){
+  const cs = custState(m);
+  let u = pickUnit(m.cust, 'jonai', cs, m.firstUnit.id);
+  if (!u) {   // once を配り切った保険：条件を満たす無印のものを頭から、それも無ければ先頭
+    const all = unitsOf(m.cust, 'jonai');
+    u = all.find(x => !x.bindFirst && x.needs.every(f => cs.flags.includes(f))) || all[0];
+  }
+  m.jonaiUnit = u;
+  cs.jonaiCount = (cs.jonaiCount || 0) + 1;
+  consumeUnit(m.cust, 'jonai', cs, u, m.firstUnit.id);
+  m.stage = 'jonai';
+  m.turn = 0;
+  m.streak = 0;
+  shuffleChoices();
+  m.phase = 'turn';
+}
+
 function advanceTurn(){
   const m = State.night.current;
   const s = CONFIG.serve;
@@ -966,9 +1072,7 @@ function advanceTurn(){
         if (m.honshimei) {
           // 本指名客に場内指名は発生しない。会話はそのまま深い段へ滑り込む
           addTrust(CONFIG.trust.jonai, `本指名の満足（${m.cust.name}）`);
-          m.stage = 'jonai'; m.turn = 0; m.streak = 0;
-          shuffleChoices();
-          m.phase = 'turn';
+          enterJonai(m);
         } else {
           State.night.earned += CONFIG.pay.jonaiBack;
           State.night.breakdown.push(`場内指名バック（${m.cust.name}） ${yen(CONFIG.pay.jonaiBack)}`);
@@ -991,69 +1095,160 @@ function advanceTurn(){
 
 G.startJonai = function(){
   const m = State.night.current;
-  m.stage = 'jonai';
-  m.turn = 0;
-  m.streak = 0;
-  shuffleChoices();
-  m.phase = 'turn';
+  enterJonai(m);
   render();
 };
 
 // ---- おねだり ----
-function onedariTier(m){
-  const o = CONFIG.serve.onedari;
-  const a = custState(m).affection;
-  const capIdx = TIER_ORDER.indexOf(m.cust.tierCap);
-  let tier = null;
-  if (a >= o.donperiLine && moodOf(m) === 'kou') tier = 'donperi';
-  else if (a >= o.champagneLine) tier = 'champagne';
-  else if (a >= o.sparkLine) tier = 'spark';
-  // 桁の違う客の下限（石油王など）。この人が入れると決めたら、安いものは出てこない
-  if (tier && m.cust.tierFloor) {
-    const floorIdx = TIER_ORDER.indexOf(m.cust.tierFloor);
-    if (TIER_ORDER.indexOf(tier) < floorIdx) tier = m.cust.tierFloor;
-  }
-  if (tier && TIER_ORDER.indexOf(tier) > capIdx) tier = m.cust.tierCap; // 予算の天井
-  return tier;
+// 4本の中から自分で選ぶ。上の階級ほど客が首を縦に振らなくなる。
+// 好感度＝今夜の温度、関係値＝積み上げてきたもの。ハイクラス以上は両方ないと開かない。
+const pickOne = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const CLASS_ORDER = ['entry', 'middle', 'high', 'elite'];
+// 旧データ（tierCap/tierFloor）の語彙を、階級の語彙に読み替える
+const CAP_TO_CLASS = { spark: 'entry', champagne: 'middle', donperi: 'elite', roze: 'elite' };
+const FLOOR_TO_CLASS = { spark: 'entry', champagne: 'middle', donperi: 'high', roze: 'elite' };
+
+function capClassIdx(cust){
+  const c = CAP_TO_CLASS[cust.tierCap] || 'elite';
+  return CLASS_ORDER.indexOf(c);
+}
+// 桁の違う客の下限（石油王など）。この人が入れると決めたら、安いものは出てこない
+function floorClassIdx(cust){
+  if (!cust.tierFloor) return 0;
+  return CLASS_ORDER.indexOf(FLOOR_TO_CLASS[cust.tierFloor] || 'entry');
 }
 
-G.onedari = function(doIt){
+// 関係値：その客から場内指名を取った回数＋雑用を引き受けた回数×2。
+// 来店回数を使うと「長く粘っただけの人」が最上級に届いてしまう。
+// 場内は正答率がjonaiRate以上でしか付かないので、これは通った回数ではなく"当てた回数"になる。
+function bondOf(cs){
+  return (cs.jonaiCount || 0) + (cs.missionIdx || 0) * CONFIG.serve.onedari.bondPerMission;
+}
+
+// 今この瞬間、客が首を縦に振る最上位の階級（-1 = 何を頼んでも断られる）
+function acceptedClassIdx(m){
+  const cs = custState(m);
+  const a = cs.affection, bond = bondOf(cs), kou = moodOf(m) === 'kou';
+  const hit = m.rallies ? (m.correct || 0) / m.rallies : 0;   // 今この卓の正答率
+  let idx = -1;
+  CLASS_ORDER.forEach((k, i) => {
+    const g = CONFIG.serve.drinkClass[k];
+    if (a >= g.aff && bond >= g.bond && (!g.mood || kou) && hit >= (g.hit || 0)) idx = i;
+  });
+  return Math.min(idx, capClassIdx(m.cust));   // 予算の天井
+}
+
+function drinksOf(classIdx){ return CONFIG.pay.drinks[CLASS_ORDER[classIdx]] || []; }
+
+function mixWeights(day){
+  let w = CONFIG.pay.drinkMix[0].w;
+  for (const row of CONFIG.pay.drinkMix) if (day >= row.fromDay) w = row.w;
+  return w;
+}
+
+// 提示する4本を組む。
+//   ・通る階級から最低1本（アンパイ）
+//   ・その1つ上から最低1本（届きそうで届かないかもしれない誘惑）
+//   ・残りは日付重みでランダム。後半ほど上の階級が増える
+function buildOffer(m){
+  const n = CONFIG.serve.onedari.choices;
+  const capIdx = capClassIdx(m.cust);
+  let loIdx = floorClassIdx(m.cust);
+  const accIdx = acceptedClassIdx(m);
+  let topIdx = Math.min(capIdx, Math.max(accIdx + 1, loIdx));
+  // 階級の幅が狭いと4本揃わない（ハイクラスは3銘柄しかない）。
+  // まず上へ、それでも足りなければ下へ広げる。下限持ちの客でも、まず上を試すのが筋。
+  const stock = () => { let c = 0; for (let i = loIdx; i <= topIdx; i++) c += drinksOf(i).length; return c; };
+  while (stock() < n && topIdx < capIdx) topIdx++;
+  while (stock() < n && loIdx > 0) loIdx--;
+  const w = mixWeights(State.day);
+
+  const picked = [], usedNames = new Set();
+  const takeFrom = (ci) => {
+    if (ci < loIdx || ci > topIdx) return false;
+    const pool = drinksOf(ci).filter(d => !usedNames.has(d.name));
+    if (!pool.length) return false;
+    const d = pool[Math.floor(Math.random() * pool.length)];
+    usedNames.add(d.name);
+    picked.push({ name: d.name, price: d.price, cls: CLASS_ORDER[ci], clsIdx: ci });
+    return true;
+  };
+
+  if (accIdx >= loIdx) takeFrom(accIdx);          // 確実に通る1本
+  if (topIdx > accIdx) takeFrom(topIdx);          // 背伸びの1本
+  let guard = 0;
+  while (picked.length < n && guard++ < 200) {
+    let tot = 0;
+    for (let i = loIdx; i <= topIdx; i++) tot += w[i] || 0;
+    let r = Math.random() * (tot || 1), ci = loIdx;
+    for (let i = loIdx; i <= topIdx; i++) { r -= (w[i] || 0); if (r <= 0) { ci = i; break; } }
+    if (!takeFrom(ci)) { for (let i = topIdx; i >= loIdx; i--) if (takeFrom(i)) break; }
+  }
+  picked.sort((a, b) => a.price - b.price);
+  return picked;
+}
+
+// 見送る
+G.onedariPass = function(){
+  const m = State.night.current;
+  m.offer = null;
+  advanceTurn(); render();
+};
+
+// 提示された4本のうち、idx番目をねだる
+G.onedariPick = function(idx){
   const m = State.night.current;
   const o = CONFIG.serve.onedari;
-  if (!doIt) { advanceTurn(); render(); return; }
+  const pick = (m.offer || [])[idx];
+  if (!pick) return;
+  const accIdx = acceptedClassIdx(m);
+  const cs = custState(m);
 
-  let tier = onedariTier(m);
-  if (tier) {
-    // ドンペリは3本目から「その上」が開く（通い込んだ太客だけの領域）
-    let roze = false;
-    if (tier === 'donperi') {
-      const cs = custState(m);
-      cs.donperiCount = (cs.donperiCount || 0) + 1;
-      if (cs.donperiCount >= 3) { tier = 'roze'; roze = true; }
-    }
-    const price = CONFIG.pay.bottlePrice[tier];
-    const back = Math.round(price * CONFIG.pay.bottleBackRate);
-    State.night.earned += back;
-    State.night.breakdown.push(`${TIER_NAME[tier]}バック${Math.round(CONFIG.pay.bottleBackRate * 100)}%（${m.cust.name}） ${yen(back)}`);
-    addTrust(CONFIG.trust.bottle[tier], `ボトルを入れた（${TIER_NAME[tier]}）`);
-    m.sold = tier;
-    m.soldCount = (m.soldCount || 0) + 1;
-    m.streakSinceSale = 0;
-    custState(m).affection = clampAff(custState(m).affection + o.cashInDrop[tier]);
-    const rate = Math.round(CONFIG.pay.bottleBackRate * 100);
-    const rozeText = `「ね、今日……」\n\n「──いや。今日は、いつものじゃつまらないな」\n客の方が先に手を挙げた。「一番上のやつ、持ってきて」\n\nドンペリロゼ級（${yen(price)}）が卓に入った！　店内が、少しざわついた。（バック${rate}% ＝ +${yen(back)}）`;
-    // 2本目は、こちらから頼むというより、乗ってきた相手に乗り返す形になる
-    const encoreText = `「……ねえ。この空気のまま、終わらせちゃうんですか？」\n\n「──はは、言うようになったな」\n彼はグラスを置いて、ボーイさんに指を二本立てた。\n\n「もう一本。同じやつ」\n\n${TIER_NAME[tier]}（${yen(price)}）、本日2本目！（バック${rate}% ＝ +${yen(back)}）`;
-    m.onedariResult = { ok: true,
-      text: roze ? rozeText
-        : m.encore ? encoreText
-        : `「ね、今日……ちょっとだけ、贅沢しちゃいません？」\n\n「……しょうがないなあ。じゃあ、${TIER_NAME[tier]}」\n\n${TIER_NAME[tier]}（${yen(price)}）が卓に入った！（バック${rate}% ＝ +${yen(back)}）` };
-  } else {
-    custState(m).affection = clampAff(custState(m).affection + o.failAffection);
+  // 身の程を超えた1本＝断られる。どれだけうわずったかで冷え方が変わる
+  if (pick.clsIdx > accIdx) {
+    const over = pick.clsIdx - accIdx;
+    const drop = over >= 2 ? o.failAffectionFar : o.failAffection;
+    cs.affection = clampAff(cs.affection + drop);
     if (moodOf(m) === 'ken') { explode(); return; }
-    tensionDrop(m, 'hazure');
-    m.onedariResult = { ok: false, text: `「ね、今日……なにか入れてくれませんか？」\n\n「……まだそういう感じじゃなくない？」\n\n空気が冷えた。（好感度 ${o.failAffection}・機嫌が悪化した）` };
+    tensionDrop(m, over >= 2 ? 'jirai' : 'hazure');
+    m.offer = null;
+    m.onedariResult = { ok: false, text: over >= 2
+      ? `「あの……${pick.name}、どうですか？」\n\n「──……本気で言ってる？」\n彼はグラスを置いた。目が、笑っていない。\n「君さ。俺のこと、いくらの財布だと思ってんの」\n\n卓の温度が、一段で落ちた。（好感度 ${drop}・機嫌が悪化した）`
+      : `「ね、今日……${pick.name}、開けちゃいません？」\n\n「……${pick.name}か。──いや、今日はやめとくわ」\n\n惜しかった。あと一歩、何かが足りなかった。（好感度 ${drop}・機嫌が悪化した）` };
+    m.phase = 'onedariResult';
+    render();
+    return;
   }
+
+  // 通った
+  const price = pick.price;
+  const back = Math.round(price * CONFIG.pay.bottleBackRate);
+  const rate = Math.round(CONFIG.pay.bottleBackRate * 100);
+  State.night.earned += back;
+  State.night.breakdown.push(`${pick.name}バック${rate}%（${m.cust.name}） ${yen(back)}`);
+  addTrust(CONFIG.trust.bottle[pick.cls], `ボトルを入れた（${pick.name}）`);
+  m.sold = pick.cls;
+  m.soldName = pick.name;
+  m.soldCount = (m.soldCount || 0) + 1;
+  m.streakSinceSale = 0;
+  if (pick.clsIdx === CLASS_ORDER.indexOf('elite')) cs.donperiCount = (cs.donperiCount || 0) + 1;
+  cs.affection = clampAff(cs.affection + o.cashInDrop[pick.cls]);
+
+  // ヒント：もっと上を頼めたのに、ずいぶん下で手を打った夜。
+  // 断りはしない。ただ、この人たちは自分の価値を安く見積もる女を、放っておかない。
+  const best = (m.offer || []).filter(d => d.clsIdx <= accIdx).sort((a, b) => b.price - a.price)[0];
+  const gap = best ? best.price - price : 0;
+  const nudge = gap >= o.hintGap ? pickOne(DATA.onedariNudge) : null;
+
+  const head = m.encore
+    ? `「……ねえ。この空気のまま、終わらせちゃうんですか？」\n\n「──はは、言うようになったな」\n彼はボーイさんに指を上げた。\n\n${pick.name}（${yen(price)}）、本日2本目！`
+    : pick.clsIdx >= CLASS_ORDER.indexOf('elite')
+      ? `「……${pick.name}、って。言ってみてもいいですか」\n\n彼は数秒こちらを見て、それから短く笑った。\n「──いいよ。持ってきて」\n\n${pick.name}（${yen(price)}）が卓に入った！　店内が、少しざわついた。`
+      : `「ね、今日……${pick.name}、開けちゃいません？」\n\n「……しょうがないなあ」\n\n${pick.name}（${yen(price)}）が卓に入った！`;
+
+  m.offer = null;
+  m.onedariResult = { ok: true, nudge,
+    text: `${head}（バック${rate}% ＝ +${yen(back)}）${nudge ? `\n\n${nudge}` : ''}` };
   m.phase = 'onedariResult';
   render();
 };
@@ -2153,7 +2348,7 @@ function renderMain(){
   if (m.phase === 'mainIntro') {
     $screen().innerHTML = `${header}
       ${m.firstMeet ? `<p class="cust-intro">${esc(cust.intro)}</p>` : ''}
-      ${m.episode.desc ? `<div class="story-box">${para(m.episode.desc)}</div>` : ''}
+      ${m.firstUnit.desc ? `<div class="story-box">${para(m.firstUnit.desc)}</div>` : ''}
       ${m.showSenpai ? `<div class="hint-box">${para(cust.senpaiHint)}</div>` : ''}
       <button class="btn btn-primary" onclick="G.startMainTalk()">接客スタート</button>`;
     return;
@@ -2251,13 +2446,17 @@ function renderMain(){
       ? `<p>1本目が、まだ半分残っている。……でも、この人の機嫌はまだ上を向いている。</p>
          <p class="onedari-note">（正解を続けて開いた"2本目の窓"。欲を出すか、きれいに終わるか）</p>`
       : `<p>……今、いける気がする？　それとも、まだ？</p>
-         <p class="onedari-note">（場内は${CONFIG.serve.jonaiRallies}ラリーで終了。待ちすぎたら今夜はゼロ）</p>`;
+         <p class="onedari-note">（高いものほど、首を縦に振ってもらえない。場内は${CONFIG.serve.jonaiRallies}ラリーで終了・待ちすぎたら今夜はゼロ）</p>`;
     $screen().innerHTML = `${header}
       <p class="turn-no">${stageLabel(m)} 終わり</p>
       <div class="story-box">${body}</div>
       <div class="choices">
-        <button class="choice" onclick="G.onedari(true)">${m.encore ? 'もう一本、おねだりする' : 'おねだりする'}</button>
-        <button class="choice" onclick="G.onedari(false)">${m.encore ? 'これ以上は言わない' : 'まだ待つ'}</button>
+        ${(m.offer || []).map((d, i) => `
+          <button class="choice onedari-drink" onclick="G.onedariPick(${i})">
+            <span class="drink-name">${d.name}</span>
+            <span class="drink-price">${yen(d.price)}</span>
+          </button>`).join('')}
+        <button class="choice" onclick="G.onedariPass()">${m.encore ? 'これ以上は言わない' : 'まだ待つ'}</button>
       </div>`;
     return;
   }

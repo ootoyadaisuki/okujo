@@ -181,6 +181,16 @@ h2 { font-size: 18px; margin: 16px 0 8px; }
 .choice:hover { border-color: var(--pink); }
 .choice-nadameru { border-color: var(--gold); color: var(--gold); }
 
+/* おねだりの銘柄ボタン：名前は左、値段は右。値段で迷わせるのが狙いなので等幅で揃える */
+.onedari-drink { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.onedari-drink .drink-name { font-weight: 600; }
+.onedari-drink .drink-price {
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
 .cmd-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
 .cmd {
   padding: 12px 10px;
