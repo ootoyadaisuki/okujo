@@ -36,6 +36,7 @@ html, body {
 .st-bars { margin-top: 4px; }
 .st-meter { display: flex; align-items: center; gap: 4px; color: var(--dim); font-size: 12px; }
 .st-bars .bar { width: 72px; }
+.help-note { color: #b0a8bd; font-size: 12px; margin: 2px 2px 6px; }
 .mind-hint { color: #b39ddb; font-size: 13px; font-style: italic; margin: 4px 2px; }
 
 /* ---- バー ---- */
@@ -89,6 +90,8 @@ h2 { font-size: 18px; margin: 16px 0 8px; }
   background: transparent; color: #ffb74d; border: 1.5px solid #ff9800;
   box-shadow: 0 0 8px rgba(255, 152, 0, .35);
 }
+.badge-help { background: transparent; color: #b0a8bd; border: 1.5px dashed #7a708a; }
+.badge-senpai { background: linear-gradient(135deg, #c95bbd, #8e44ad); color: #fff; }
 .badge-honshimei {
   background: transparent; color: #ff9ecb; border: 1.5px solid #ff6fb0;
   box-shadow: 0 0 8px rgba(255, 111, 176, .35);

@@ -475,7 +475,11 @@ function custActive(id){
   return !cs.banned && State.day >= (CUSTOMERS[id].fromDay || 1) && !spotGraduated(id);
 }
 
+// 研修期間：最初の2日は先輩のヘルプ。モブ卓だけを回され、場内指名も起きない
+function inTutorial(){ return State.day <= CONFIG.tutorial.helpDays; }
+
 function pickMains(){
+  if (inTutorial()) return { mains: [], weird: 0 };   // 上級客は回ってこない＝場内指名も発生しない
   if (State.trust < CONFIG.trust.weirdLine2) return { mains: [], weird: 2 };
   if (State.trust < CONFIG.trust.weirdLine)  return { mains: [], weird: 1 };
   let cands = Object.keys(CUSTOMERS).filter(id =>
@@ -523,16 +527,20 @@ function startNight(){
     State.night.breakdown.push(`本指名で再来（${ar.name}さん・アフターの縁） ${yen(CONFIG.afterInvite.returnAmount)}`);
   }
   State.screen = 'night';
-  if (State.day === 1) { State.night.showIntro = true; }
+  if (State.day === 1) { State.night.showIntro = true; State.night.tutorialIdx = 0; }
   nextTable();
 }
 
 // 一見/モブ卓・変な客卓は「引き切るまで重複なし」の永続デッキから配る（尽きたら再シャッフル）
+// 研修中（最初の2日）は、顔と空気を覚えるだけの期間なのでモブ卓しか回ってこない
 function drawTable(weird){
-  const dk = weird ? 'weirdDeck' : 'lightDeck';
-  const pk = weird ? 'weirdPos' : 'lightPos';
+  const tut = !weird && inTutorial();
+  const dk = weird ? 'weirdDeck' : (tut ? 'mobDeck' : 'lightDeck');
+  const pk = weird ? 'weirdPos' : (tut ? 'mobPos' : 'lightPos');
   if (!State[dk] || State[pk] >= State[dk].length) {
-    const pool = weird ? DATA.weirdTables : [...DATA.lightTables, ...(DATA.mobTables || [])];
+    const pool = weird ? DATA.weirdTables
+      : tut ? (DATA.mobTables || [])
+      : [...DATA.lightTables, ...(DATA.mobTables || [])];
     State[dk] = pool.slice().sort(() => Math.random() - 0.5);
     State[pk] = 0;
   }
@@ -1729,6 +1737,7 @@ function renderNight(){
       <button class="btn btn-primary" onclick="render()">フロアへ</button>`;
     return;
   }
+  if (n.tutorialIdx != null) return renderTutorial();
   if (n.eventLabel && !n.eventShown) {
     n.eventShown = true;
     $screen().innerHTML = `
@@ -1742,6 +1751,32 @@ function renderNight(){
   return renderMain();
 }
 
+// 初出勤の夜、先輩キャバ嬢が遊び方を教えてくれる（1ページずつ送る）
+function renderTutorial(){
+  const sp = DATA.senpai;
+  const i = State.night.tutorialIdx;
+  const last = i >= sp.pages.length - 1;
+  $screen().innerHTML = `
+    <div class="cust-head">
+      <span class="cust-name">💄 ${esc(sp.title)}</span>
+      <span class="cust-badge badge-senpai">研修</span>
+    </div>
+    <div class="cust-visual">
+      <img src="images/${sp.id}.webp" alt="" onerror="this.parentElement.classList.add('noimg')">
+      <span class="visual-fallback">（ここに ${esc(sp.name)} の画像<br><small>images/${sp.id}.webp を置くと表示</small>）</span>
+    </div>
+    <p class="turn-no">${i + 1} / ${sp.pages.length}</p>
+    <div class="story-box cust-line">${para(sp.pages[i])}</div>
+    <button class="btn btn-primary" onclick="G.tutorialNext()">${last ? 'フロアへ' : '▼'}</button>`;
+}
+
+G.tutorialNext = function(){
+  const n = State.night;
+  if (n.tutorialIdx < DATA.senpai.pages.length - 1) n.tutorialIdx++;
+  else n.tutorialIdx = null;
+  render();
+};
+
 function nightHeader(title, badge, aff){
   return `<div class="cust-head"><span class="cust-name">${title}</span>${aff || ''}${badge || ''}</div>
     <p class="cust-intro">${State.night.step}卓目</p>`;
@@ -1753,18 +1788,19 @@ function renderLight(){
   const who = t.job ? `${esc(t.job)}・${esc(t.name)}` : (cur.weird ? '回された卓' : 'フリーの一見さん');
   const title = `${cur.weird ? '🌀' : '🥂'} ${who}`;
   const notice = cur.notice ? `<p class="warn">${esc(DATA.weirdNotice)}</p>` : '';
+  const helpNote = inTutorial() ? `<p class="help-note">${esc(DATA.helpNotice)}</p>` : '';
   const affMeter = `<span class="cust-aff">好感度 ${bar(cur.mobAff, 100, 'bar-aff')}</span>`;
   const r = cur.table.rallies[cur.rally];
   const isLast = cur.rally + 1 >= cur.table.rallies.length;
   // モブ卓は1枚絵（水割り・普通）を表示。imgが無い既存卓は従来どおり画像なし
   const mobImg = cur.table.img
-    ? `<div class="cust-visual"><img src="images/mob_${cur.table.img}.png" alt="" onerror="this.parentElement.classList.add('noimg')"><span class="visual-fallback">（モブ画像 images/mob_${cur.table.img}.png）</span></div>`
+    ? `<div class="cust-visual"><img src="images/mob_${cur.table.img}.webp" alt="" onerror="this.parentElement.classList.add('noimg')"><span class="visual-fallback">（モブ画像 images/mob_${cur.table.img}.webp）</span></div>`
     : '';
   if (cur.phase === 'intro') {
     const insult = cur.insult
       ? `<div class="story-box bad">${para(cur.insult)}</div>
          <div class="note-box"><p>・メンタル ${CONFIG.busu.mental}</p><p>・（……容姿を磨けば、こういう夜は減っていく）</p></div>` : '';
-    $screen().innerHTML = `${nightHeader(title, stageBadge(cur), affMeter)}${notice}
+    $screen().innerHTML = `${nightHeader(title, stageBadge(cur), affMeter)}${notice}${helpNote}
       ${mobImg}
       <div class="story-box">${para(cur.table.desc)}</div>
       ${insult}
@@ -1795,32 +1831,33 @@ function stageLabel(m){
     : `場内指名 ${m.turn + 1}/${CONFIG.serve.jonaiRallies}`;
 }
 
-// 客の関係バッジ：フリー（青枠）／場内指名（オレンジ枠）／本指名（ピンク枠）
+// 客の関係バッジ：ヘルプ（灰枠）／フリー（青枠）／場内指名（オレンジ枠）／本指名（ピンク枠）
 function stageBadge(m){
   if (m.kind === 'main') {
     if (m.honshimei) return '<span class="cust-badge badge-honshimei">本指名</span>';
     if (m.stage === 'jonai') return '<span class="cust-badge badge-jonai">場内指名</span>';
     return '<span class="cust-badge badge-free">フリー</span>';   // first＝探り＝フリー接客中
   }
+  if (inTutorial()) return '<span class="cust-badge badge-help">ヘルプ</span>';  // 研修中は先輩の卓に付くだけ
   return '<span class="cust-badge badge-free">フリー</span>';       // 一見・変な客は常にフリー
 }
 
-// 客の画像ファイル名：images/{客id}_{表情}.png（fu=普/kou=好/ken=険/explosion=爆発）
+// 客の画像ファイル名：images/{客id}_{表情}.webp（fu=普/kou=好/ken=険/explosion=爆発）
 // 画像を置くだけで自動表示される。無ければ仮枠を出す
 function custImage(m){
   const face = faceOf(m);
   // 画像の出し分け：
-  // ・マイナス表情(m1〜m4)＝グラスなしの1種類（{id}_{face}.png）
+  // ・マイナス表情(m1〜m4)＝グラスなしの1種類（{id}_{face}.webp）
   // ・プラス/ニュートラル(fu,p1〜p4)＝ボトルが入る前は水割り(_mizu)、入った後はシャンパン(プレーン)
   const isNeg = face[0] === 'm';
   const src = isNeg
-    ? `images/${m.cust.id}_${face}.png`
-    : (m.sold ? `images/${m.cust.id}_${face}.png` : `images/${m.cust.id}_${face}_mizu.png`);
+    ? `images/${m.cust.id}_${face}.webp`
+    : (m.sold ? `images/${m.cust.id}_${face}.webp` : `images/${m.cust.id}_${face}_mizu.webp`);
   const label = face === 'fu' ? '普通' : `テンション${m.tension > 0 ? '+' + m.tension : m.tension}`;
   // 水割り画像が無ければシャンパン(プレーン)へ、それも無ければ枠表示へフォールバック
   return `<div class="cust-visual">
-    <img src="${src}" alt="" onerror="if (this.src.includes('_mizu.png')) { this.src = this.src.replace('_mizu.png', '.png'); } else { this.parentElement.classList.add('noimg'); }">
-    <span class="visual-fallback">（ここに ${esc(m.cust.name)} の画像／表情：${label}<br><small>images/${m.cust.id}_${face}.png を置くと表示</small>）</span>
+    <img src="${src}" alt="" onerror="if (this.src.includes('_mizu.webp')) { this.src = this.src.replace('_mizu.webp', '.webp'); } else { this.parentElement.classList.add('noimg'); }">
+    <span class="visual-fallback">（ここに ${esc(m.cust.name)} の画像／表情：${label}<br><small>images/${m.cust.id}_${face}.webp を置くと表示</small>）</span>
   </div>`;
 }
 

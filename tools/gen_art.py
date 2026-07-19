@@ -6,11 +6,12 @@
   GEMINI_API_KEY必須（~/.zshrcにあり。zsh -ic 経由でも可）
   python3 tools/gen_art.py ishi          # 院長の全表情を生成
   python3 tools/gen_art.py ishi ken      # 特定の表情だけ
-出力: images/{cust_id}_{face}.png
+出力: images/{cust_id}_{face}.webp
 """
 import base64
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.request
@@ -49,7 +50,7 @@ BACKGROUNDS = {
 CUSTOMERS = {
     "ishi": {
         "bg": "a",                        # 院長は背景A固定（全表情で同じ席）
-        "ref": "images/_ref_ishi.png",   # 承認済みキャラの参照画像
+        "ref": "images/_ref_ishi.webp",   # 承認済みキャラの参照画像
         "chara": (
             "【重要】参照画像は「人物の見た目」だけの参考。背景・内装・照明は参照画像から一切コピーしないこと。"
             "背景は必ず上記の八王子の庶民的な店の指定に差し替える（シャンデリア・豪華な壁は描かない）。"
@@ -74,12 +75,33 @@ CUSTOMERS = {
 }
 
 
+# 生成画像はすべてWebPで保存する（リポジトリを軽く保つ）。表示枠は560px幅なので1200pxで足りる
+WEBP_WIDTH = 1200
+WEBP_QUALITY = 85
+
+
+def _mime(path):
+    return "image/webp" if path.lower().endswith(".webp") else "image/png"
+
+
+def save_as_webp(raw, out_path):
+    """APIが返すPNGバイト列を、リサイズ済みWebPとして保存する"""
+    tmp = out_path + ".tmp.png"
+    with open(tmp, "wb") as f:
+        f.write(raw)
+    r = subprocess.run(["cwebp", "-q", str(WEBP_QUALITY), "-resize", str(WEBP_WIDTH), "0",
+                        "-quiet", tmp, "-o", out_path])
+    os.remove(tmp)
+    if r.returncode != 0:
+        raise RuntimeError("cwebp に失敗（brew install webp）")
+
+
 def generate(prompt, ref_paths, out_path, retries=3):
     parts = [{"text": prompt}]
     for rp in (ref_paths or []):
         if rp and os.path.exists(rp):
             with open(rp, "rb") as f:
-                parts.append({"inline_data": {"mime_type": "image/png",
+                parts.append({"inline_data": {"mime_type": _mime(rp),
                                               "data": base64.b64encode(f.read()).decode()}})
     body = {
         "contents": [{"parts": parts}],
@@ -97,8 +119,7 @@ def generate(prompt, ref_paths, out_path, retries=3):
             for part in data["candidates"][0]["content"]["parts"]:
                 blob = part.get("inlineData") or part.get("inline_data")
                 if blob:
-                    with open(out_path, "wb") as f:
-                        f.write(base64.b64decode(blob["data"]))
+                    save_as_webp(base64.b64decode(blob["data"]), out_path)
                     return True
             print(f"  !! 画像が返らなかった（{attempt}回目）", file=sys.stderr)
         except Exception as e:
@@ -109,11 +130,11 @@ def generate(prompt, ref_paths, out_path, retries=3):
 
 def gen_backgrounds(only=None):
     """背景4パターンを生成。aを先に作り、b〜dはaを参照して同じ店に見せる"""
-    base = os.path.join(ROOT, "images", "bg_a.png")
+    base = os.path.join(ROOT, "images", "bg_a.webp")
     for bg_id, desc in BACKGROUNDS.items():
         if only and bg_id != only:
             continue
-        out = os.path.join(ROOT, "images", f"bg_{bg_id}.png")
+        out = os.path.join(ROOT, "images", f"bg_{bg_id}.webp")
         refs = []
         prompt = f"{STYLE}\n{STORE}\n席＝{desc}"
         if bg_id != "a" and os.path.exists(base):
@@ -128,14 +149,14 @@ def gen_backgrounds(only=None):
 def gen_customer(cust_id, only=None):
     cust = CUSTOMERS[cust_id]
     face_ref = os.path.join(ROOT, cust["ref"])
-    bg_ref = os.path.join(ROOT, "images", f"bg_{cust['bg']}.png")
+    bg_ref = os.path.join(ROOT, "images", f"bg_{cust['bg']}.webp")
     if not os.path.exists(bg_ref):
-        print(f"背景 bg_{cust['bg']}.png が無い。先に: python3 tools/gen_art.py bg", file=sys.stderr)
+        print(f"背景 bg_{cust['bg']}.webp が無い。先に: python3 tools/gen_art.py bg", file=sys.stderr)
         sys.exit(2)
     for face, face_prompt in cust["faces"].items():
         if only and face != only:
             continue
-        out = os.path.join(ROOT, "images", f"{cust_id}_{face}.png")
+        out = os.path.join(ROOT, "images", f"{cust_id}_{face}.webp")
         prompt = (
             f"{STYLE}\n"
             "参照画像は2枚：1枚目＝この卓の背景（店の席）、2枚目＝人物の顔。\n"
@@ -152,6 +173,27 @@ def gen_customer(cust_id, only=None):
         print(f"  -> {'OK ' + out if ok else '失敗'}")
 
 
+def gen_senpai():
+    """先輩キャバ嬢レイナ（初出勤のチュートリアル役）。客ではないので背景は控室"""
+    out = os.path.join(ROOT, "images", "senpai.webp")
+    prompt = (
+        f"{STYLE}\n"
+        "【背景】東京・八王子駅前の雑居ビル5階にある中規模キャバクラの控室（更衣室）。"
+        "壁一面の大きな鏡と電球付きのメイク台、化粧品やヘアアイロンが雑多に並ぶ、"
+        "ハンガーラックにドレスが数着。豪華ではなく生活感のある楽屋。暖色の照明。\n"
+        "【人物】20代半ばの日本人女性キャバ嬢ひとり。店のナンバー2で、面倒見はいいが口は悪い姉御肌。"
+        "巻いた明るいブラウンのロングヘア、目力の強いはっきりしたメイク、"
+        "肩を出した濃いワインレッドのロングドレス、背中側に大きなリボン、大ぶりのピアス。"
+        "腕を組んで少し顎を上げ、こちらを見て自信たっぷりに口角を上げた表情。新人を値踏みしつつ面白がっている顔。\n"
+        "【構図】バストアップで画面中央、頭が画面上端近くまで来る大きさ、カメラ目線（新人の一人称目線）。"
+        "背後にメイク台の鏡が見える近さ。引きの構図・全身は禁止。\n"
+        "画像内に文字・ロゴ・ウォーターマークは一切描かない。"
+    )
+    print("生成中: senpai（先輩キャバ嬢・レイナ）...")
+    ok = generate(prompt, [], out)
+    print(f"  -> {'OK ' + out if ok else '失敗'}")
+
+
 def main():
     if not KEY:
         print("GEMINI_API_KEY 未設定", file=sys.stderr)
@@ -160,6 +202,8 @@ def main():
     only = sys.argv[2] if len(sys.argv) > 2 else None
     if target == "bg":
         gen_backgrounds(only)
+    elif target == "senpai":
+        gen_senpai()
     else:
         gen_customer(target, only)
 

@@ -1,2 +1,7 @@
 .DS_Store
 node_modules/
+
+# 生成の中間物・没画像（ローカルにだけ置く）
+images/_old/
+images/_rejected_openai/
+images/*.tmp.png
