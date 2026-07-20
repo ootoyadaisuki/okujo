@@ -115,8 +115,12 @@ G.continueGame = function(){
   if (State.lastNagashiDay == null) State.lastNagashiDay = -9;
   if (State.seikeiCount == null) State.seikeiCount = 0;
   if (State.busuSeen == null) State.busuSeen = false;
+  if (State.seikeiNight == null) State.seikeiNight = -99;
   if (State.sundayIdx == null) State.sundayIdx = 0;
   if (State.sunday === undefined) State.sunday = null;
+  if (State.workNo == null) State.workNo = 0;
+  if (!State.mobImgLog) State.mobImgLog = {};
+  if (State.lastWarukuchi == null) State.lastWarukuchi = -99;
   for (const id of Object.keys(CUSTOMERS)) {
     if (!State.cust[id]) {
       State.cust[id] = { affection: CONFIG.serve.affectionStart, banned: false, met: false, epIdx: 0, lastVisit: 0, visits: 0, lastSuccess: false, missionIdx: 0, donperiCount: 0, flags: [], usedFirst: [], usedJonai: [], usedPairs: [], jonaiCount: 0 };
@@ -173,8 +177,10 @@ G.newGame = function(){
     skipStreak: 0, lastSkipDay: -9,
     workedToday: false, workedYesterday: true,   // 朝のイベントの出し分け（昨夜、店に出たか）
     nagashiStreak: 0, lastNagashiDay: -9,        // 流しの連投を店長が見ている
-    seikeiCount: 0, busuSeen: false,             // 12/27の初ダメ出し判定
+    seikeiCount: 0, busuSeen: false, seikeiNight: -99,  // 12/27の初ダメ出し判定／整形した営業日
     sundayIdx: 0, sunday: null,                  // 日曜（店休）の街歩き
+    workNo: 0, mobImgLog: {},                    // 営業日の通し番号／モブ画像を最後に出した営業日
+    lastWarukuchi: -99,                          // 同僚の陰口を最後に聞いた日
     benchNext: false,
     kintoreBuzz: false,
     uniBuzz: false,
@@ -369,6 +375,7 @@ G.pickSeikeiClinic = function(i){
   const info = DATA.parts[pid];
   const notes = [`${yen(c.cost)} 使った（${c.name}）`];
   State.seikeiCount = (State.seikeiCount || 0) + 1;   // 一度でも手を入れたか（12/27の初ダメ出し判定に使う）
+  State.seikeiNight = State.workNo || 0;              // いつ入れたか（数日は容姿の話をされない猶予）
   let story;
   if (Math.random() < c.rate) {
     const before = State.parts[pid];
@@ -431,7 +438,8 @@ G.toNightNagashi = function(){
   const earned = ng.wage - CONFIG.pay.hairSet + drinks * CONFIG.pay.drinkBack * (nev ? nev.drinkMult : 1);
   State.mental = clampMental(State.mental + ng.mental);
   State.stamina = clampStamina(State.stamina + ng.stamina);
-  addTrust(CONFIG.trust.perNight);
+  State.workNo = (State.workNo || 0) + 1;
+  if (State.day > 1) addTrust(CONFIG.trust.perNight);   // 初日に皆勤ボーナスはない
   State.workedToday = true;
   State.night = {
     breakdown: [
@@ -439,7 +447,7 @@ G.toNightNagashi = function(){
       `ヘアセット代 -${yen(CONFIG.pay.hairSet)}`,
       `ドリンクバック${drinks}杯 ${yen(drinks * CONFIG.pay.drinkBack * (nev ? nev.drinkMult : 1))}`,
     ],
-    trustNotes: [`皆勤 +${CONFIG.trust.perNight}`],
+    trustNotes: State.day > 1 ? [`皆勤 +${CONFIG.trust.perNight}`] : [],
   };
   // 流しの連投は店長に見えている。3回続けたところで、閉店後に呼び止められる
   State.nagashiStreak = (State.lastNagashiDay === State.day - 1) ? State.nagashiStreak + 1 : 1;
@@ -606,6 +614,13 @@ function hasFreshTalk(id){
     .some(u => !cs.usedFirst.includes(u.id) && u.needs.every(f => cs.flags.includes(f)));
 }
 
+// その日に回ってくる指名卓の数（後半ほど増える。稼げるが、そのぶん心身が削れる）
+function mainsQuotaOf(day){
+  let n = CONFIG.mainsPerNight;
+  for (const row of (CONFIG.mainsSchedule || [])) if (day >= row.fromDay) n = row.n;
+  return n;
+}
+
 function pickMains(){
   if (inTutorial()) return { mains: [], weird: 0 };   // 上級客は回ってこない＝場内指名も発生しない
   if (State.trust < CONFIG.trust.weirdLine2) return { mains: [], weird: 2 };
@@ -615,15 +630,29 @@ function pickMains(){
   if (cands.length === 0) cands = Object.keys(CUSTOMERS).filter(id =>
     custActive(id) && pickUnit(CUSTOMERS[id], 'first', State.cust[id]));
   cands.sort((a, b) => (State.cust[a].lastVisit || 0) - (State.cust[b].lastVisit || 0));
-  return { mains: cands.slice(0, CONFIG.mainsPerNight), weird: 0 };
+  // 卓が重なる夜は体力を要求する。体力が残っていなければ、店長も無理には入れない
+  let quota = mainsQuotaOf(State.day);
+  const affordable = Math.max(1, Math.floor((State.stamina - CONFIG.stamina.noWorkLine) / 20));
+  quota = Math.min(quota, affordable);
+  return { mains: cands.slice(0, quota), weird: 0 };
 }
 
 function startNight(){
+  State.workNo = (State.workNo || 0) + 1;   // 営業日の通し番号（モブ画像の寝かせに使う）
   const { mains, weird } = pickMains();
   const plan = [];
   for (let i = 0; i < weird; i++) plan.push('weird');
-  while (plan.length + mains.length < 3) plan.push('light');
+  // 指名が増えた夜でもフリーの卓は最低1つ残す（＝夜が指名だけで埋まらない）
+  const floorTables = Math.max(CONFIG.tablesPerNight, mains.length + 1);
+  while (plan.length + mains.length < floorTables) plan.push('light');
   mains.forEach(id => plan.push('main:' + id));  // 本命は夜の最後（クライマックス）
+  // 指名が重なった夜は、それだけで体と心を持っていかれる
+  const extraMains = Math.max(0, mains.length - 1);
+  if (extraMains > 0) {
+    const ob = CONFIG.overbooked;
+    State.stamina = clampStamina(State.stamina + ob.stamina * extraMains);
+    State.mental  = clampMental(State.mental  + ob.mental  * extraMains);
+  }
   const nev = CONFIG.nightEvents[State.day];
   State.night = {
     plan,
@@ -636,6 +665,8 @@ function startNight(){
     drinkMult: nev ? nev.drinkMult : 1,
     eventLabel: nev ? nev.label : null,
     eventShown: false,
+    mainCount: mains.length,
+    extraMains,
   };
   // 昨夜のお叱りの翌日は、フリーの卓を1つ外される
   if (State.benchNext) {
@@ -653,18 +684,41 @@ function startNight(){
     State.night.earned += CONFIG.afterInvite.returnAmount;
     State.night.breakdown.push(`本指名で再来（${ar.name}さん・アフターの縁） ${yen(CONFIG.afterInvite.returnAmount)}`);
   }
-  State.screen = 'night';
   if (State.day === 1) { State.night.showIntro = true; State.night.tutorialIdx = 0; }
+  // 卓に着く前に、まず「出勤」の一枚。今夜の店の顔ぶれを、支度をしながら受け取る
+  State.screen = 'shukkin';
+  render();
+}
+
+// 出勤画面 → フロアへ
+G.enterFloor = function(){
+  State.screen = 'night';
   nextTable();
   // 研修明けの初日は、接客に入る前にレイナが背中を押してくれる
   if (State.day >= CONFIG.tutorial.helpDays + 1 && !State.day3StartSeen && State.screen === 'night') {
     State.day3StartSeen = true;
     playScene('day3Start', () => { State.screen = 'night'; render(); });
   }
-}
+};
 
 // 一見/モブ卓・変な客卓は「引き切るまで重複なし」の永続デッキから配る（尽きたら再シャッフル）
 // 研修中（最初の2日）は、顔と空気を覚えるだけの期間なのでモブ卓しか回ってこない
+// 直近に顔を出したモブ画像か（当日＋直近 cooldownNights 営業日ぶんは、同じ顔を出さない）
+// ※「営業日」で数える。休んだ日を挟んでも"3営業日ぶん"の間隔が空く
+function mobImgOnCooldown(img){
+  if (!img) return false;
+  const log = State.mobImgLog || {};
+  const seenAt = log[img];
+  if (seenAt == null) return false;
+  return (State.workNo || 0) - seenAt <= CONFIG.mobImage.cooldownNights;
+}
+
+function noteMobImg(img){
+  if (!img) return;
+  State.mobImgLog = State.mobImgLog || {};
+  State.mobImgLog[img] = State.workNo || 0;
+}
+
 function drawTable(weird){
   const tut = !weird && inTutorial();
   const dk = weird ? 'weirdDeck' : (tut ? 'mobDeck' : 'lightDeck');
@@ -676,13 +730,30 @@ function drawTable(weird){
     State[dk] = pool.slice().sort(() => Math.random() - 0.5);
     State[pk] = 0;
   }
-  // 女性客（偵察・同伴）は店が育ってから。序盤は飛ばして次を引く
-  while (State[pk] < State[dk].length
-         && State[dk][State[pk]].img === 'josei' && State.day < CONFIG.joseiFromDay) {
-    State[pk]++;
+  // 出せない卓（女性客が早すぎる／同じ顔が続く）は飛ばして次を引く
+  //   ・女性客（偵察・同伴）は店が育ってから
+  //   ・直近の夜に出た画像は、顔の使い回しが見えるので寝かせる
+  const skippable = (t) =>
+    (t.img === 'josei' && State.day < CONFIG.joseiFromDay) || mobImgOnCooldown(t.img);
+  const startPos = State[pk];
+  while (State[pk] < State[dk].length && skippable(State[dk][State[pk]])) State[pk]++;
+  if (State[pk] >= State[dk].length) {
+    // デッキを引き切った。寝かせ中の顔しか残っていない可能性があるので、
+    // 一度だけデッキを組み直し、それでも埋まらなければ寝かせを無視して出す（無限ループ回避）
+    if (State[dk + 'Retry']) {
+      State[dk + 'Retry'] = false;
+      State[pk] = startPos < State[dk].length ? startPos : 0;
+      return State[dk][State[pk]++] || State[dk][0];
+    }
+    State[dk + 'Retry'] = true;
+    State[dk] = null;
+    const t = drawTable(weird);
+    State[dk + 'Retry'] = false;
+    return t;
   }
-  if (State[pk] >= State[dk].length) { State[dk] = null; return drawTable(weird); }
-  return State[dk][State[pk]++];
+  const table = State[dk][State[pk]++];
+  noteMobImg(table.img);
+  return table;
 }
 
 function nextTable(){
@@ -715,20 +786,56 @@ function nextTable(){
       order: [...Array(table.rallies[0].choices.length).keys()].sort(() => Math.random() - 0.5),
       notice: weird && !n.weirdNoticeShown,
       mobAff: CONFIG.mobAff.start,
+      topicId: null,
     };
     if (weird) n.weirdNoticeShown = true;
     if (!weird && table.img) (n.mobsSeen = n.mobsSeen || []).push({ job: table.job, name: table.name });
+    // 話題の種：モブ卓でも、その客の"型"に合う種を仕込んでいれば刺さる。
+    // 指名卓は一晩に1〜3卓しかない。種が腐らないよう、フリーの卓でも回収できるようにしてある。
+    // ただし今夜これから着く指名卓が同じ種を欲しがっているなら、モブには使わせない
+    // （指名卓は夜の最後。先にモブが食べてしまうと、種は永遠に本命へ届かない）
+    const mobTopic = DATA.mobTopicAffinity[table.img];
+    const reservedByMain = mobTopic && n.plan.slice(n.step).some(k =>
+      k.startsWith('main:') && CUSTOMERS[k.split(':')[1]].topicAffinity === mobTopic);
+    if (!weird && mobTopic && !reservedByMain && State.topics[mobTopic]) {
+      delete State.topics[mobTopic];
+      n.current.topicId = mobTopic;
+      n.current.mobAff = clampAff(n.current.mobAff + CONFIG.topic.affection);
+    }
     // 容姿が低いうちは、酔客の無神経が顔に飛んでくる（容姿を磨くほど減る）。言うのは男性客だけ
+    // ※プチ整形の直後だけは言われない。ただし包帯が取れて何営業日か経てば、客はもう前の顔を知らない
     const bs = CONFIG.busu;
-    const maleMob = !weird && table.img && table.img !== 'josei';
+    const nightNo = State.workNo || 0;
+    const seikeiShield = (State.seikeiCount || 0) > 0
+      && nightNo - (State.seikeiNight || 0) <= bs.seikeiGraceNights   // 入れた直後の猶予
+      && nightNo < bs.lateFromNight;                                  // 10営業日目以降は猶予も切れる
+    const maleMob = !weird && table.img && table.img !== 'josei' && !seikeiShield;
     // 12/27以降、まだ一度もプチ整形していないなら、最初に当たった男性客が必ず言ってくる
     // （その日に休む・流すこともあるので「12/27ちょうど」ではなく「12/27以降の初回」で確定させる）
-    const firstStrike = maleMob && State.day >= bs.firstDay && !State.busuSeen && !State.seikeiCount;
-    if (maleMob && State.day >= bs.fromDay && State.stats.looks < bs.looksCeil
+    const firstStrike = maleMob && State.day >= bs.firstDay && !State.busuSeen;
+    // 10営業日目以降は、容姿が45以下なら整形歴と無関係に一定確率で飛んでくる
+    const lateStrike = maleMob && nightNo >= bs.lateFromNight
+      && State.stats.looks <= bs.lateLooksLine && Math.random() < bs.lateChance;
+    if (lateStrike) {
+      State.busuSeen = true;
+      n.current.insult = DATA.busuLines[Math.floor(Math.random() * DATA.busuLines.length)];
+      State.mental = clampMental(State.mental + bs.mental);
+    } else if (maleMob && State.day >= bs.fromDay && State.stats.looks < bs.looksCeil
         && (firstStrike || Math.random() < (bs.looksCeil - State.stats.looks) * bs.ratePerPoint)) {
       State.busuSeen = true;
       n.current.insult = DATA.busuLines[Math.floor(Math.random() * DATA.busuLines.length)];
       State.mental = clampMental(State.mental + bs.mental);
+    }
+    // 研修期間のトラブル（先輩の卓で、新人がやらかす／巻き込まれる）
+    if (inTutorial() && !n.helpTroubleDone && Math.random() < CONFIG.helpTrouble.chance) {
+      n.helpTroubleDone = true;
+      const list = DATA.helpTroubles;
+      const tr = list[(State.helpTroubleIdx || 0) % list.length];
+      State.helpTroubleIdx = (State.helpTroubleIdx || 0) + 1;
+      n.current.trouble = tr;
+      if (tr.mental)  State.mental  = clampMental(State.mental + tr.mental);
+      if (tr.stamina) State.stamina = clampStamina(State.stamina + tr.stamina);
+      if (tr.trust)   addTrust(tr.trust, tr.title);
     }
   } else {
     const cust = CUSTOMERS[kind.split(':')[1]];
@@ -942,13 +1049,28 @@ G.nadameru = function(){
   render();
 };
 
+// 客が爆発した。
+// ただし「出禁」まで転がるのは、もう関係が冷え切っている相手だけ（好感度 banAffLine 以下）。
+// 好感度が残っている客は、その夜は怒って帰る。それでも、次はまた来る。
+// ──一度の失言で積み上げた関係が丸ごと消えるのは、人間関係の描写として重すぎる。
 function explode(){
   const m = State.night.current;
+  const s = CONFIG.serve;
+  const cs = custState(m);
   m.exploded = true;
-  custState(m).banned = true;
-  addTrust(CONFIG.trust.explosion, `${m.cust.name}を出禁に`);
-  m.result = { text: m.cust.explosion, dAff: 0, dMental: -20, type: 'explosion' };
-  State.mental = clampMental(State.mental - 20);
+  if (cs.affection <= s.banAffLine) {
+    cs.banned = true;
+    m.banned = true;
+    addTrust(CONFIG.trust.explosion, `${m.cust.name}を出禁に`);
+    State.mental = clampMental(State.mental - 20);
+    m.result = { text: m.cust.explosion, dAff: 0, dMental: -20, type: 'explosion' };
+  } else {
+    const w = s.walkout;
+    cs.affection = clampAff(cs.affection + w.affection);
+    State.mental = clampMental(State.mental + w.mental);
+    addTrust(w.trust, `${m.cust.name}を怒らせた`);
+    m.result = { text: (m.cust.walkout || DATA.walkoutDefault), dAff: w.affection, dMental: w.mental, type: 'explosion' };
+  }
   m.phase = 'react';
   render();
 }
@@ -1126,13 +1248,20 @@ function bondOf(cs){
 }
 
 // 今この瞬間、客が首を縦に振る最上位の階級（-1 = 何を頼んでも断られる）
+// 開栓条件は既定の drinkClass。ただし客ごとに drinkGate を書けば上書きできる
+// （例：石油王は関係値ではなく、その夜の温度だけで桁が動く）
+function gateOf(cust, key){
+  const over = (cust.drinkGate || {})[key];
+  return Object.assign({}, CONFIG.serve.drinkClass[key], over || {});
+}
+
 function acceptedClassIdx(m){
   const cs = custState(m);
   const a = cs.affection, bond = bondOf(cs), kou = moodOf(m) === 'kou';
   const hit = m.rallies ? (m.correct || 0) / m.rallies : 0;   // 今この卓の正答率
   let idx = -1;
   CLASS_ORDER.forEach((k, i) => {
-    const g = CONFIG.serve.drinkClass[k];
+    const g = gateOf(m.cust, k);
     if (a >= g.aff && bond >= g.bond && (!g.mood || kou) && hit >= (g.hit || 0)) idx = i;
   });
   return Math.min(idx, capClassIdx(m.cust));   // 予算の天井
@@ -1212,9 +1341,15 @@ G.onedariPick = function(idx){
     if (moodOf(m) === 'ken') { explode(); return; }
     tensionDrop(m, over >= 2 ? 'jirai' : 'hazure');
     m.offer = null;
-    m.onedariResult = { ok: false, text: over >= 2
-      ? `「あの……${pick.name}、どうですか？」\n\n「──……本気で言ってる？」\n彼はグラスを置いた。目が、笑っていない。\n「君さ。俺のこと、いくらの財布だと思ってんの」\n\n卓の温度が、一段で落ちた。（好感度 ${drop}・機嫌が悪化した）`
-      : `「ね、今日……${pick.name}、開けちゃいません？」\n\n「……${pick.name}か。──いや、今日はやめとくわ」\n\n惜しかった。あと一歩、何かが足りなかった。（好感度 ${drop}・機嫌が悪化した）` };
+    // 断り文句は既定の1種類。ただし喋り方が特殊な客（通訳アプリ越しの石油王など）は
+    // customers.js の onedariDeny に自分の声を持てる
+    const deny = m.cust.onedariDeny;
+    const tmpl = deny ? (over >= 2 ? deny.far : deny.near) : null;
+    m.onedariResult = { ok: false, text: tmpl
+      ? tmpl.replace(/\{name\}/g, pick.name) + `\n\n（好感度 ${drop}・機嫌が悪化した）`
+      : over >= 2
+        ? `「あの……${pick.name}、どうですか？」\n\n「──……本気で言ってる？」\n彼はグラスを置いた。目が、笑っていない。\n「君さ。俺のこと、いくらの財布だと思ってんの」\n\n卓の温度が、一段で落ちた。（好感度 ${drop}・機嫌が悪化した）`
+        : `「ね、今日……${pick.name}、開けちゃいません？」\n\n「……${pick.name}か。──いや、今日はやめとくわ」\n\n惜しかった。あと一歩、何かが足りなかった。（好感度 ${drop}・機嫌が悪化した）` };
     m.phase = 'onedariResult';
     render();
     return;
@@ -1230,6 +1365,7 @@ G.onedariPick = function(idx){
   m.sold = pick.cls;
   m.soldName = pick.name;
   m.soldCount = (m.soldCount || 0) + 1;
+  State.night.bottlesTonight = (State.night.bottlesTonight || 0) + 1;   // 控え室の噂の燃料
   m.streakSinceSale = 0;
   if (pick.clsIdx === CLASS_ORDER.indexOf('elite')) cs.donperiCount = (cs.donperiCount || 0) + 1;
   cs.affection = clampAff(cs.affection + o.cashInDrop[pick.cls]);
@@ -1240,11 +1376,16 @@ G.onedariPick = function(idx){
   const gap = best ? best.price - price : 0;
   const nudge = gap >= o.hintGap ? pickOne(DATA.onedariNudge) : null;
 
-  const head = m.encore
-    ? `「……ねえ。この空気のまま、終わらせちゃうんですか？」\n\n「──はは、言うようになったな」\n彼はボーイさんに指を上げた。\n\n${pick.name}（${yen(price)}）、本日2本目！`
-    : pick.clsIdx >= CLASS_ORDER.indexOf('elite')
-      ? `「……${pick.name}、って。言ってみてもいいですか」\n\n彼は数秒こちらを見て、それから短く笑った。\n「──いいよ。持ってきて」\n\n${pick.name}（${yen(price)}）が卓に入った！　店内が、少しざわついた。`
-      : `「ね、今日……${pick.name}、開けちゃいません？」\n\n「……しょうがないなあ」\n\n${pick.name}（${yen(price)}）が卓に入った！`;
+  // 受け方も、喋り方が特殊な客は自分の声を持てる（customers.js の onedariOk）
+  const okv = m.cust.onedariOk;
+  const kind = m.encore ? 'encore' : (pick.clsIdx >= CLASS_ORDER.indexOf('elite') ? 'elite' : 'normal');
+  const head = (okv && okv[kind])
+    ? okv[kind].replace(/\{name\}/g, pick.name).replace(/\{price\}/g, yen(price))
+    : m.encore
+      ? `「……ねえ。この空気のまま、終わらせちゃうんですか？」\n\n「──はは、言うようになったな」\n彼はボーイさんに指を上げた。\n\n${pick.name}（${yen(price)}）、本日2本目！`
+      : pick.clsIdx >= CLASS_ORDER.indexOf('elite')
+        ? `「……${pick.name}、って。言ってみてもいいですか」\n\n彼は数秒こちらを見て、それから短く笑った。\n「──いいよ。持ってきて」\n\n${pick.name}（${yen(price)}）が卓に入った！　店内が、少しざわついた。`
+        : `「ね、今日……${pick.name}、開けちゃいません？」\n\n「……しょうがないなあ」\n\n${pick.name}（${yen(price)}）が卓に入った！`;
 
   m.offer = null;
   m.onedariResult = { ok: true, nudge,
@@ -1280,6 +1421,24 @@ function endNight(){
     render();
     return;
   }
+  // 閉店後の控え室。数字が伸びるほど、同じ店の女の子から風が吹く
+  // （プレイヤーの失敗ではなく、勝ち始めた者に必ず来るコスト）
+  const wk = CONFIG.warukuchi;
+  const soldTonight = (nn.bottlesTonight || 0);
+  if (!nn.warukuchiDone && State.screen !== 'soutai'
+      && State.day >= wk.fromDay
+      && State.day - (State.lastWarukuchi || -99) >= wk.minGap
+      && Math.random() < wk.chance + soldTonight * wk.bonusPerBottle) {
+    nn.warukuchiDone = true;
+    State.lastWarukuchi = State.day;
+    State.mental = clampMental(State.mental + wk.mental);
+    const list = DATA.warukuchiScenes;
+    State.warukuchi = list[(State.warukuchiIdx || 0) % list.length];
+    State.warukuchiIdx = (State.warukuchiIdx || 0) + 1;
+    State.screen = 'warukuchi';
+    render();
+    return;
+  }
   // 閉店後、まれにモブ客からアフターの誘い
   const ai = CONFIG.afterInvite;
   const seen = State.night.mobsSeen || [];
@@ -1297,7 +1456,8 @@ function endNight(){
 
 function finishNight(full){
   State.stats.talk = clampStat(State.stats.talk + CONFIG.talkGrowthPerNight);
-  if (full) addTrust(CONFIG.trust.perNight, '皆勤');
+  // 初日に皆勤ボーナスは付かない。1日出ただけの人間を、店はまだ数えない
+  if (full && State.day > 1) addTrust(CONFIG.trust.perNight, '皆勤');
   State.workedToday = true;
   State.nagashiStreak = 0;   // 本気で出た夜は、流しの連投カウントを切る
   endDay(State.night.earned);
@@ -1329,6 +1489,7 @@ G.afterChoice = function(i){
   }
   render();
 };
+G.endWarukuchi = function(){ State.screen = 'night'; endNight(); };   // 陰口のあとも、夜の後処理は続く
 G.endAfter = function(){ finishNight(!!State.night.wasFull); };
 G.endScold = function(){ finishNight(false); };   // お叱りの夜に、皆勤の褒めはない
 
@@ -1653,6 +1814,8 @@ function render(){
   if (S === 'scold') return renderScold();
   if (S === 'apologize') return renderApologize();
   if (S === 'mission') return renderMission();
+  if (S === 'shukkin') return renderShukkin();
+  if (S === 'warukuchi') return renderWarukuchi();
   if (S === 'oshiEvent') return renderOshiEvent();
   if (S === 'holiday') return renderHoliday();
   if (S === 'night') return renderNight();
@@ -1862,7 +2025,14 @@ G.sundayChoice = function(i){
   render();
 };
 
-G.endSunday = function(){ State.sunday = null; endDay(0); };
+// 日曜は店休。働いていない夜に給与明細を出しても、¥0の紙を見せるだけになる
+// （明細を飛ばして、そのまま翌朝へ送る）
+G.endSunday = function(){
+  State.sunday = null;
+  State.night = null;
+  endDay(0);
+  if (State.screen === 'nightResult') G.toNextDay();
+};
 
 G.apologize = function(){
   const ap = CONFIG.apologize;
@@ -2138,6 +2308,46 @@ function renderSoutai(){
 }
 
 // ---- 夜の描画 ----
+// ---- 出勤画面（卓に着く前の、支度と店内の空気）----
+// 今夜どういう夜になるのかを、フロアに出る前に受け取る場所
+function renderShukkin(){
+  const n = State.night;
+  const notes = [];
+  if (inTutorial()) notes.push('今夜も先輩のヘルプ。卓の空気を、まず覚える');
+  else if (n.mainCount === 0) notes.push('指名の予定は入っていない。今夜はフリーで勝負');
+  else if (n.mainCount === 1) notes.push('指名がひとつ、ボードに入っている');
+  else notes.push(`指名が${n.mainCount}件。……ボードを二度見した`);
+  if (n.extraMains > 0) {
+    const ob = CONFIG.overbooked;
+    notes.push(`卓が重なる夜は、それだけで削れる（体力 ${ob.stamina * n.extraMains}／メンタル ${ob.mental * n.extraMains}）`);
+  }
+  notes.push(`今夜の卓数：${n.plan.length}卓（1卓ごとに体力 ${CONFIG.stamina.perTable}）`);
+  if (n.eventLabel) notes.push(`${n.eventLabel}──今夜はドリンクバック×${n.drinkMult}`);
+  const story = n.mainCount >= 3 ? DATA.shukkinScenes.rush
+    : n.mainCount === 2 ? DATA.shukkinScenes.busy
+    : inTutorial() ? DATA.shukkinScenes.help
+    : DATA.shukkinScenes.normal;
+  $screen().innerHTML = `
+    <h2>🚪 出勤</h2>
+    <div class="scene-visual"><img src="images/bg1_final.webp" alt="" onerror="this.parentElement.style.display='none'"></div>
+    <div class="story-box">${para(story)}</div>
+    <div class="note-box">${notes.map(t => `<p>・${esc(t)}</p>`).join('')}</div>
+    <button class="btn btn-primary" onclick="G.enterFloor()">フロアへ出る</button>`;
+}
+
+// ---- 控え室の陰口（同じ店のキャバ嬢に、後ろから刺される夜）----
+function renderWarukuchi(){
+  const w = State.warukuchi;
+  $screen().innerHTML = `
+    <h2>🚬 閉店後・控え室</h2>
+    <div class="story-box bad">${para(w.text)}</div>
+    <div class="note-box">
+      <p>・メンタル ${CONFIG.warukuchi.mental}</p>
+      <p>・${esc(w.note || '数字が伸びるほど、後ろからの風は強くなる')}</p>
+    </div>
+    <button class="btn btn-primary" onclick="G.endWarukuchi()">${esc(w.btn || '……聞こえなかったことにする')}</button>`;
+}
+
 function renderNight(){
   const n = State.night;
   if (n.showIntro) {
@@ -2251,11 +2461,28 @@ function renderLight(){
     const insult = cur.insult
       ? `<div class="story-box bad">${para(cur.insult)}</div>
          <div class="note-box"><p>・メンタル ${CONFIG.busu.mental}</p><p>・（……容姿を磨けば、こういう夜は減っていく）</p></div>` : '';
+    // 研修期間のトラブル（ヘルプの新人が踏む地雷）
+    const tr = cur.trouble;
+    const trouble = tr
+      ? `<div class="story-box bad">${para(tr.text)}</div>
+         <div class="note-box">${[
+            tr.mental  ? `・メンタル ${tr.mental}` : '',
+            tr.stamina ? `・体力 ${tr.stamina}` : '',
+            tr.trust   ? `・店長の信頼 ${tr.trust}` : '',
+            tr.lesson  ? `・${esc(tr.lesson)}` : '',
+          ].filter(Boolean).map(t => `<p>${t}</p>`).join('')}</div>` : '';
+    // 話題の種が、フリーの卓で芽吹いた
+    const topic = cur.topicId
+      ? `<div class="story-box ok">${para(DATA.topicEvents[cur.topicId])}</div>
+         <div class="note-box"><p>・話題の種「${esc(DATA.topicNames[cur.topicId])}」が刺さった！　好感度 +${CONFIG.topic.affection}</p><p>・（この種は使い切った。また仕込める）</p></div>` : '';
+    const btn = cur.insult ? '……笑顔で、接客スタート'
+      : tr ? '……気を取り直して、接客スタート'
+      : '接客スタート';
     $screen().innerHTML = `${nightHeader(title, stageBadge(cur), affMeter)}${notice}${helpNote}
       ${mobImg}
       <div class="story-box">${para(cur.table.desc)}</div>
-      ${insult}
-      <button class="btn btn-primary" onclick="G.startLightTalk()">${cur.insult ? '……笑顔で、接客スタート' : '接客スタート'}</button>`;
+      ${trouble}${topic}${insult}
+      <button class="btn btn-primary" onclick="G.startLightTalk()">${btn}</button>`;
     return;
   }
   if (cur.phase === 'pick') {
@@ -2276,9 +2503,15 @@ function renderLight(){
   }
 }
 
+// 本指名の客に「場内」は存在しない。指名で来ている相手に、席を延ばす交渉は要らない
 function stageLabel(m){
-  return m.stage === 'first'
-    ? `フリー接客 ${m.turn + 1}/${CONFIG.serve.firstRallies}`
+  if (m.stage === 'first') {
+    return m.honshimei
+      ? `本指名 ${m.turn + 1}/${CONFIG.serve.firstRallies}`
+      : `フリー接客 ${m.turn + 1}/${CONFIG.serve.firstRallies}`;
+  }
+  return m.honshimei
+    ? `本指名 ${m.turn + 1}/${CONFIG.serve.jonaiRallies}`
     : `場内指名 ${m.turn + 1}/${CONFIG.serve.jonaiRallies}`;
 }
 
@@ -2381,8 +2614,10 @@ function renderMain(){
   if (m.phase === 'react') {
     const r = m.result;
     const cls = { seikai:'ok', bonda:'', hazure:'bad', jirai:'bad', nadameru:'', explosion:'bad' }[r.type] || '';
-    const delta = r.type === 'explosion' ? '' :
-      `<div class="note-box"><p>・好感度 ${r.dAff >= 0 ? '+' + r.dAff : r.dAff}／メンタル ${r.dMental}</p></div>`;
+    // 出禁になった夜だけは、数字を見せない（もう数字の話ではない）
+    const delta = (r.type === 'explosion' && m.banned) ? ''
+      : `<div class="note-box"><p>・好感度 ${r.dAff >= 0 ? '+' + r.dAff : r.dAff}／メンタル ${r.dMental}</p>${
+          r.type === 'explosion' ? `<p>・（好感度は残っている。……出禁ではない。次は、来る）</p>` : ''}</div>`;
     $screen().innerHTML = `${header}
       <div class="story-box ${cls}">${para(r.text)}</div>
       ${delta}
@@ -2446,7 +2681,7 @@ function renderMain(){
       ? `<p>1本目が、まだ半分残っている。……でも、この人の機嫌はまだ上を向いている。</p>
          <p class="onedari-note">（正解を続けて開いた"2本目の窓"。欲を出すか、きれいに終わるか）</p>`
       : `<p>……今、いける気がする？　それとも、まだ？</p>
-         <p class="onedari-note">（高いものほど、首を縦に振ってもらえない。場内は${CONFIG.serve.jonaiRallies}ラリーで終了・待ちすぎたら今夜はゼロ）</p>`;
+         <p class="onedari-note">（高いものほど、首を縦に振ってもらえない。この卓はあと${Math.max(0, CONFIG.serve.jonaiRallies - m.turn - 1)}ラリーで終わり・待ちすぎたら今夜はゼロ）</p>`;
     $screen().innerHTML = `${header}
       <p class="turn-no">${stageLabel(m)} 終わり</p>
       <div class="story-box">${body}</div>
@@ -2471,7 +2706,9 @@ function renderMain(){
 
   if (m.phase === 'tableEnd') {
     const summary = m.exploded
-      ? '<p>卓は、最悪の形で終わった。</p>'
+      ? (m.banned
+          ? '<p>卓は、最悪の形で終わった。……あの人は、もう来ない。</p>'
+          : '<p>卓は、途中で終わった。伝票だけが残っている。<br>……それでも、あの人はまた来る。今夜のことは、たぶん覚えたまま。</p>')
       : (m.soldCount || 0) >= 2
         ? '<p>ボトルが2本。……こんな夜が、月に何度かあればいいのに。</p>'
         : m.sold
