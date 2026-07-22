@@ -98,6 +98,7 @@ G.continueGame = function(){
   if (State.lastBinge == null) State.lastBinge = -99;
   if (State.lastMission == null) State.lastMission = -99;
   if (!State.oshiDone) State.oshiDone = {};
+  if (!State.motherDone) State.motherDone = {};
   if (State.uniRumor == null) State.uniRumor = 0;
   if (State.seikeiBuzz === undefined) State.seikeiBuzz = null;
   if (State.kintoreBuzz == null) State.kintoreBuzz = false;
@@ -188,6 +189,8 @@ G.newGame = function(){
     oshiDone: {},
     holidayDone: {},
     holidayPicked: null,
+    motherDone: {},
+    motherEvent: null, motherPicked: null, motherNotes: [],
     loseReason: null,
     cust,
     night: null,
@@ -1637,6 +1640,17 @@ function enterDay(){
     render();
     return;
   }
+  // 母イベント（対立→和解の小さな縦軸。部屋にいる朝、電話やLINEが来る）
+  const me = (DATA.motherEvents || []).find(e => e.day === State.day && !State.motherDone[e.day]);
+  if (me) {
+    State.motherPicked = null;
+    State.motherNotes = [];
+    if (me.effects) applyEffects(me.effects, State.motherNotes);
+    State.motherEvent = me;
+    State.screen = 'mother';
+    render();
+    return;
+  }
   // 店休日（大晦日・元日・初詣）＝スクリプトイベントで1日が過ぎる
   if (CONFIG.holidays.includes(State.day) && !State.holidayDone[State.day]) {
     State.holidayPicked = null;
@@ -1763,6 +1777,21 @@ G.endHoliday = function(){
   enterDay();
 };
 
+G.motherChoice = function(i){
+  const m = State.motherEvent;
+  const c = m.choice[i];
+  State.motherPicked = c;
+  if (c.effects) applyEffects(c.effects, State.motherNotes);
+  render();
+};
+
+G.endMother = function(){
+  State.motherDone[State.day] = true;
+  State.motherEvent = null;
+  State.motherPicked = null;
+  enterDay();
+};
+
 G.endLiving = function(){ enterDay(); };
 G.endBiyou = function(){ enterDay(); };
 G.endBinge = function(){ enterDay(); };
@@ -1854,6 +1883,7 @@ function render(){
   if (S === 'warukuchi') return renderWarukuchi();
   if (S === 'oshiEvent') return renderOshiEvent();
   if (S === 'holiday') return renderHoliday();
+  if (S === 'mother') return renderMother();
   if (S === 'night') return renderNight();
   if (S === 'soutai') return renderSoutai();
   if (S === 'nightResult') return renderNightResult();
@@ -2154,6 +2184,29 @@ function renderHoliday(){
     <div class="story-box">${para(picked ? picked.scene : h.scene)}</div>
     ${notes}
     <button class="btn btn-primary" onclick="G.endHoliday()">${esc(h.next || '眠る')}</button>`;
+}
+
+function renderMother(){
+  const m = State.motherEvent;
+  const banner = sceneBanner(m.bg || 'room');
+  const notes = (State.motherNotes || []).length
+    ? `<div class="note-box">${State.motherNotes.map(n => `<p>・${esc(n)}</p>`).join('')}</div>` : '';
+  if (m.choice && !State.motherPicked) {
+    $screen().innerHTML = `
+      <h2>${esc(m.title)}</h2>
+      ${banner}
+      <div class="story-box">${para(m.scene)}</div>
+      <div class="choices">${m.choice.map((c, i) =>
+        `<button class="choice" onclick="G.motherChoice(${i})">${esc(c.label)}</button>`).join('')}</div>`;
+    return;
+  }
+  const picked = State.motherPicked;
+  $screen().innerHTML = `
+    <h2>${esc(m.title)}</h2>
+    ${banner}
+    <div class="story-box">${para(picked ? picked.scene : m.scene)}</div>
+    ${notes}
+    <button class="btn btn-primary" onclick="G.endMother()">${esc(m.next || '今日も始まる')}</button>`;
 }
 
 function renderLiving(){

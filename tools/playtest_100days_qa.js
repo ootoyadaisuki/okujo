@@ -165,6 +165,10 @@ function playthrough100(name) {
       const h = DATA.holidays[State.day];
       if (h.choice && !State.holidayPicked) G.holidayChoice(Math.floor(seed() * h.choice.length));
       else G.endHoliday();
+    } else if (State.screen === 'mother') {
+      const m = State.motherEvent;
+      if (m.choice && !State.motherPicked) G.motherChoice(Math.floor(seed() * m.choice.length));
+      else G.endMother();
     } else if (State.screen === 'soutai') {
       G.endSoutai();
     } else if (State.screen === 'scene') {

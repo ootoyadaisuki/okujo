@@ -199,6 +199,10 @@ function playthrough(name, policy, quiet) {
       const h = DATA.holidays[State.day];
       if (h.choice && !State.holidayPicked) G.holidayChoice(Math.floor(Math.random() * h.choice.length));
       else G.endHoliday();
+    } else if (State.screen === 'mother') {
+      const m = State.motherEvent;
+      if (m.choice && !State.motherPicked) G.motherChoice(Math.floor(Math.random() * m.choice.length));
+      else G.endMother();
     } else if (State.screen === 'soutai') {
       log.soutai++;
       G.endSoutai();
