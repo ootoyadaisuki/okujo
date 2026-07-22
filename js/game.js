@@ -13,7 +13,7 @@
 
 const $screen = () => document.getElementById('screen');
 const $status = () => document.getElementById('status-bar');
-const yen = n => '¥' + n.toLocaleString('ja-JP');
+const yen = n => n < 0 ? '-¥' + (-n).toLocaleString('ja-JP') : '¥' + n.toLocaleString('ja-JP');
 const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const para = s => esc(s).split('\n').map(l => l===''?'<br>':`<p>${l}</p>`).join('');
 
@@ -685,6 +685,13 @@ function startNight(){
     State.night.breakdown.push(`本指名で再来（${ar.name}さん・アフターの縁） ${yen(CONFIG.afterInvite.returnAmount)}`);
   }
   if (State.day === 1) { State.night.showIntro = true; State.night.tutorialIdx = 0; }
+  // 遅刻：出勤10回に1回くらい、間に合わない。夜は働けるが、店長の信頼だけ削れる
+  const ck = CONFIG.chikoku;
+  if (State.day >= ck.fromDay && !inTutorial() && Math.random() < ck.chance) {
+    State.night.chikoku = true;
+    State.night.chikokuText = DATA.chikokuScenes[Math.floor(Math.random() * DATA.chikokuScenes.length)];
+    addTrust(CONFIG.trust.chikoku, '遅刻');
+  }
   // 卓に着く前に、まず「出勤」の一枚。今夜の店の顔ぶれを、支度をしながら受け取る
   State.screen = 'shukkin';
   render();
@@ -809,7 +816,9 @@ function nextTable(){
     const seikeiShield = (State.seikeiCount || 0) > 0
       && nightNo - (State.seikeiNight || 0) <= bs.seikeiGraceNights   // 入れた直後の猶予
       && nightNo < bs.lateFromNight;                                  // 10営業日目以降は猶予も切れる
-    const maleMob = !weird && table.img && table.img !== 'josei' && !seikeiShield;
+    // 話題の種が刺さった卓では言わせない。せっかく仕込んだ種が芽吹いた画面に
+    // 容姿ディスりを重ねると、同じ卓で温度が真逆に振れる（種は消費済みなので取り返しもきかない）
+    const maleMob = !weird && table.img && table.img !== 'josei' && !seikeiShield && !n.current.topicId;
     // 12/27以降、まだ一度もプチ整形していないなら、最初に当たった男性客が必ず言ってくる
     // （その日に休む・流すこともあるので「12/27ちょうど」ではなく「12/27以降の初回」で確定させる）
     const firstStrike = maleMob && State.day >= bs.firstDay && !State.busuSeen;
@@ -942,6 +951,16 @@ G.nextTable = function(){ nextTable(); };
 function turnData(m){
   const u = m.stage === 'first' ? m.firstUnit : m.jonaiUnit;
   return u.rallies[m.turn];
+}
+// 本指名客は場内指名を挟まずに深い段へ入る（game.js の enterJonai 参照）。
+// 「場内指名、ね」で始まる一行は本指名の卓では嘘になるので、専用の一行に差し替える
+function turnLine(m){
+  const r = turnData(m);
+  return (m.honshimei && r.honshimeiLine) ? r.honshimeiLine : r.line;
+}
+// 話題の種の芽吹き方は、客が自分の文面を持っていればそちらを使う
+function topicText(cust, topicId){
+  return (cust && cust.topicEvents && cust.topicEvents[topicId]) || DATA.topicEvents[topicId];
 }
 function rallyNo(m){
   return m.stage === 'first' ? m.turn + 1 : CONFIG.serve.firstRallies + m.turn + 1;
@@ -1090,7 +1109,8 @@ function settleDrinks(m){
 
 G.afterReact = function(){
   const m = State.night.current;
-  if (m.exploded) { settleDrinks(m); m.phase = 'tableEnd'; render(); return; }
+  // 爆発した卓は、react の一枚で言い切っている。tableEnd の総括を重ねると同じ説明が2回続く
+  if (m.exploded) { settleDrinks(m); nextTable(); return; }
   // 話題の種：T1の直後、好みが合う話題を仕込んでいたら会話が芽吹く（使うと消費）
   const aff = m.cust.topicAffinity;
   if (m.stage === 'first' && m.turn === 0 && !m.topicDone && aff && State.topics[aff]) {
@@ -1374,7 +1394,8 @@ G.onedariPick = function(idx){
   // 断りはしない。ただ、この人たちは自分の価値を安く見積もる女を、放っておかない。
   const best = (m.offer || []).filter(d => d.clsIdx <= accIdx).sort((a, b) => b.price - a.price)[0];
   const gap = best ? best.price - price : 0;
-  const nudge = gap >= o.hintGap ? pickOne(DATA.onedariNudge) : null;
+  // 客が自分の口調を持っているなら、そちらを使う（ハムダーンはカタカナ+漢字しか話さない）
+  const nudge = gap >= o.hintGap ? pickOne(m.cust.onedariNudge || DATA.onedariNudge) : null;
 
   // 受け方も、喋り方が特殊な客は自分の声を持てる（customers.js の onedariOk）
   const okv = m.cust.onedariOk;
@@ -1431,10 +1452,11 @@ function endNight(){
       && Math.random() < wk.chance + soldTonight * wk.bonusPerBottle) {
     nn.warukuchiDone = true;
     State.lastWarukuchi = State.day;
-    State.mental = clampMental(State.mental + wk.mental);
     const list = DATA.warukuchiScenes;
     State.warukuchi = list[(State.warukuchiIdx || 0) % list.length];
     State.warukuchiIdx = (State.warukuchiIdx || 0) + 1;
+    // 場面ごとに mental を持てる。先輩に助けられる夜は、削られるのではなく回復する
+    State.mental = clampMental(State.mental + (State.warukuchi.mental ?? wk.mental));
     State.screen = 'warukuchi';
     render();
     return;
@@ -1500,7 +1522,8 @@ function ryunenUnsettled(){
   return State.uniAttended < CONFIG.uni.need && !State.uniWarned.ryunen;
 }
 
-function endDay(earned){
+// skipResult: 店に出ていない日（VIPの頼まれごとなど）は「閉店」の集計画面を出さずに翌朝へ送る
+function endDay(earned, skipResult){
   State.money += earned;
   State.lastEarned = earned;
   // 翌朝のイベント出し分け用（昨夜、店に出たか＝店・客・帰り道の話をしていいか）
@@ -1511,6 +1534,7 @@ function endDay(earned){
   if (State.money >= CONFIG.goalMoney && !ryunenUnsettled()) { State.screen = 'ending'; State.win = true; render(); return; }
   if (State.day >= CONFIG.totalDays)   { State.screen = 'ending'; State.win = false; render(); return; }
   State.day++;
+  if (skipResult) { G.toNextDay(); return; }
   State.screen = 'nightResult';
   render();
 }
@@ -1541,7 +1565,7 @@ function pendingUniEvent(){
 
 function biyouSchedule(){
   const list = [];
-  for (const it of CONFIG.biyou.items) for (const d of it.days) list.push({ day: d, label: it.label, cost: it.cost });
+  for (const it of CONFIG.biyou.items) for (const d of it.days) list.push({ day: d, label: it.label, cost: it.cost, id: it.id });
   return list.sort((a, b) => a.day - b.day);
 }
 
@@ -1644,23 +1668,15 @@ function enterDay(){
       return;
     }
   }
-  // VIP雑用ミッション（重要人物からの頼まれごと。朝の電話で打診される）
-  const mi = pendingMission();
-  if (mi) {
-    State.mission = mi;
-    State.missionPhase = 'offer';
-    State.missionPicked = null;
-    State.screen = 'mission';
-    render();
-    return;
-  }
   State.screen = 'day';
   render();
 }
 
 // 次に打診すべきミッション（VIPのみ・来店回数が条件・間隔を空ける）
+// 日曜に呼び出される頼まれごと（sunday: true）と、平日の夜を潰す頼まれごとは別枠。
+// 日曜には日曜の仕事だけ、平日には平日の仕事だけを打診する
 function pendingMission(){
-  if (isSunday(State.day)) return null;   // 「今日は店に出られない」が意味を持たない日には打診されない
+  const wantSunday = isSunday(State.day);
   if (State.day - (State.lastMission || -99) < CONFIG.mission.gapDays) return null;
   for (const id of Object.keys(CUSTOMERS)) {
     if (CUSTOMERS[id].tier !== 'vip') continue;
@@ -1669,6 +1685,7 @@ function pendingMission(){
     const list = DATA.missions[id] || [];
     const idx = cs.missionIdx || 0;
     if (idx >= list.length) continue;
+    if (!!list[idx].sunday !== wantSunday) continue;
     if (cs.visits >= list[idx].afterVisits) return { custId: id, data: list[idx] };
   }
   return null;
@@ -1702,8 +1719,27 @@ G.missionChoice = function(i){
   render();
 };
 
-G.endMission = function(){ endDay(0); };          // 1日が消える（夜給ゼロ）
-G.endMissionDecline = function(){ State.screen = 'day'; render(); };  // 断った日は普通に動ける
+// VIP雑用ミッションは「今日は何する？」を済ませた後に打診される。
+// 受ければその日は店に出ない／断ればそのまま出勤の選択に進む
+G.hasMission = function(){ return !!pendingMission(); };
+
+G.toMission = function(){
+  const mi = pendingMission();
+  if (!mi) { State.screen = 'day'; render(); return; }
+  State.mission = mi;
+  State.missionPhase = 'offer';
+  State.missionPicked = null;
+  State.screen = 'mission';
+  render();
+};
+
+G.endMission = function(){ endDay(0, true); };    // 1日が消える（夜給ゼロ・店に出ていないので閉店画面は挟まない）
+// 断った日は普通に動ける。日曜に断ったなら、空いた1日はそのまま街歩きに戻る
+G.endMissionDecline = function(){
+  if (isSunday(State.day)) { G.toSunday(); return; }
+  State.screen = 'day';
+  render();
+};
 
 G.holidayChoice = function(i){
   const h = DATA.holidays[State.day];
@@ -1974,6 +2010,11 @@ function workButtons(){
     return `<div class="hint-box">店からのシフト連絡が、来ていない。……嫌な予感がする。</div>
       <button class="btn btn-primary" onclick="G.toNight()">……店に向かう</button>`;
   }
+  // VIPからの頼まれごとは、夜へ向かう前に割り込む。受ければ今日は店に出ない
+  if (pendingMission()) {
+    return `<div class="hint-box">支度をしていたら、スマホが鳴った。……この時間にかけてくる相手は、限られている。</div>
+      <button class="btn btn-primary" onclick="G.toMission()">📞 電話に出る</button>`;
+  }
   if (State.trust < CONFIG.trust.apologizeLine) {
     return `<div class="hint-box">店長から「今日は入らなくていい」と連絡が来た。……卓に付かせてもらえない。まずは、信頼からだ。</div>
       <button class="btn btn-primary" onclick="G.apologize()">🙇 店長に謝りに行く（今夜は働けない／信頼を取り戻す）</button>`;
@@ -1986,9 +2027,12 @@ function workButtons(){
 // ---- 日曜（店休）：ひとりで街へ ----
 // たまに本指名客と鉢合わせる。店の外で会う客は、店の中の客とは別人だ
 G.toSunday = function(){
+  // 日曜が指定された頼まれごと（ライブの現場ヘルプなど）は、その日曜を丸ごと使う
+  if (pendingMission()) { G.toMission(); return; }
   const honshimeiIds = Object.keys(CUSTOMERS).filter(id => {
     const cs = State.cust[id];
-    return cs && cs.visits >= 2 && !cs.banned;
+    // noSundayMeet の客は街で鉢合わせない（共有の鉢合わせ文面が成立しない相手）
+    return cs && cs.visits >= 2 && !cs.banned && !CUSTOMERS[id].noSundayMeet;
   });
   if (honshimeiIds.length && Math.random() < CONFIG.sunday.honshimeiChance) {
     const custId = honshimeiIds[Math.floor(Math.random() * honshimeiIds.length)];
@@ -2008,7 +2052,7 @@ G.sundayChoice = function(i){
   const c = s.kind === 'honshimei'
     ? DATA.sundayHonshimei.choices[i]
     : s.ev.choices[i];
-  if (c.money)   { State.money += c.money; notes.push(`${yen(c.money)}`); }
+  if (c.money)   { State.money += c.money; notes.push(`${c.money > 0 ? '+' : '-'}${yen(Math.abs(c.money))}`); }
   if (c.mental)  { State.mental  = clampMental(State.mental + c.mental);   notes.push(`メンタル ${c.mental > 0 ? '+' + c.mental : c.mental}`); }
   if (c.stamina) { State.stamina = clampStamina(State.stamina + c.stamina); notes.push(`体力 ${c.stamina > 0 ? '+' + c.stamina : c.stamina}`); }
   if (c.aff && s.kind === 'honshimei') {
@@ -2081,6 +2125,7 @@ function renderUniEvent(){
     : `<div class="note-box"><p>・メンタル ${p.mental}${p.stamina ? `／体力 ${p.stamina}` : ''}</p><p>・大学の出席 ${State.uniAttended}/${CONFIG.uni.need}（1月末まで＝残り${Math.max(0, CONFIG.uni.lastDay - State.day)}日）</p></div>`;
   $screen().innerHTML = `
     <h2>${titles[ev]}</h2>
+    ${sceneBanner(ev === 'ryunen' ? 'ryunen' : 'uni_call')}
     <div class="story-box bad">${para(DATA.uniCalls[ev])}</div>
     ${notes}
     <button class="btn btn-primary" onclick="G.endUniEvent()">${ev === 'ryunen' ? '……それでも、夜は来る' : '通話を切る'}</button>`;
@@ -2114,6 +2159,7 @@ function renderHoliday(){
 function renderLiving(){
   $screen().innerHTML = `
     <h2>🧾 引き落とし日</h2>
+    ${sceneBanner('living')}
     <div class="story-box">${para(DATA.livingScene)}</div>
     <div class="note-box"><p>・家賃・生活費 -${yen(CONFIG.living.cost)}</p><p>・残高 ${yen(State.money)}</p></div>
     <button class="btn btn-primary" onclick="G.endLiving()">通帳を閉じる</button>`;
@@ -2123,6 +2169,7 @@ function renderBiyou(){
   const it = State.biyouItem;
   $screen().innerHTML = `
     <h2>💅 ${esc(it.label)}</h2>
+    ${sceneBanner(it.id ? `biyou_${it.id}` : '')}
     <div class="story-box">${para(DATA.biyouScenes[it.label] || '')}</div>
     <div class="note-box"><p>・${esc(it.label)} -${yen(it.cost)}</p><p>・残高 ${yen(State.money)}</p></div>
     <button class="btn btn-primary" onclick="G.endBiyou()">続ける</button>`;
@@ -2132,12 +2179,12 @@ function renderMission(){
   const mi = State.mission;
   const cust = CUSTOMERS[mi.custId];
   const d = mi.data;
-  const head = `<h2>📞 ${esc(d.title)}</h2><p class="cust-intro">${esc(cust.name)}からの頼まれごと</p>`;
+  const head = `<h2>📞 ${esc(d.title)}</h2>${sceneBanner('mission_call')}<p class="cust-intro">${esc(cust.name)}からの頼まれごと</p>`;
   if (State.missionPhase === 'offer') {
     $screen().innerHTML = `${head}
       <div class="story-box">${para(d.call)}</div>
       <div class="choices">
-        <button class="choice" onclick="G.missionAccept()">引き受ける（今日は出勤できない）</button>
+        <button class="choice" onclick="G.missionAccept()">引き受ける（${isSunday(State.day) ? '日曜が丸ごと潰れる' : '今日は出勤できない'}）</button>
         <button class="choice" onclick="G.missionDecline()">断る（好感度 ${CONFIG.mission.declineAff}）</button>
       </div>`;
   } else if (State.missionPhase === 'scene') {
@@ -2149,7 +2196,7 @@ function renderMission(){
     const ch = State.missionPicked;
     $screen().innerHTML = `${head}
       <div class="story-box ok">${para(ch.react)}</div>
-      <div class="note-box"><p>・${esc(cust.name)}の好感度 +${ch.aff}${ch.mental ? `／メンタル ${ch.mental > 0 ? '+' + ch.mental : ch.mental}` : ''}${ch.stamina ? `／体力 ${ch.stamina > 0 ? '+' + ch.stamina : ch.stamina}` : ''}</p><p>・今日は店を休んだ（夜の給料はなし）</p></div>
+      <div class="note-box"><p>・${esc(cust.name)}の好感度 +${ch.aff}${ch.mental ? `／メンタル ${ch.mental > 0 ? '+' + ch.mental : ch.mental}` : ''}${ch.stamina ? `／体力 ${ch.stamina > 0 ? '+' + ch.stamina : ch.stamina}` : ''}</p><p>・${isSunday(State.day) ? '日曜が、まるまるこれで終わった' : '今日は店を休んだ（夜の給料はなし）'}</p></div>
       <button class="btn btn-primary" onclick="G.endMission()">今日はこれで、おしまい</button>`;
   } else {
     $screen().innerHTML = `${head}
@@ -2161,6 +2208,7 @@ function renderMission(){
 function renderScold(){
   $screen().innerHTML = `
     <h2>😤 閉店後の呼び出し</h2>
+    ${sceneBanner('scold')}
     <div class="story-box bad">${para(DATA.scoldScene)}</div>
     <div class="note-box"><p>・メンタル ${CONFIG.scold.mental}／体力 ${CONFIG.scold.stamina}</p><p>・明日はフリーの卓を1つ外される</p></div>
     <button class="btn btn-primary" onclick="G.endScold()">……頭、冷やします</button>`;
@@ -2169,6 +2217,7 @@ function renderScold(){
 function renderApologize(){
   $screen().innerHTML = `
     <h2>🙇 開店前の店</h2>
+    ${sceneBanner('apologize')}
     <div class="story-box">${para(DATA.apologizeScene)}</div>
     <div class="note-box"><p>・店長の信頼 +${State.apologizeResult.gain}（いま ${State.trust}）／メンタル ${CONFIG.apologize.mental}</p><p>・今夜の収入はなし</p></div>
     <button class="btn btn-primary" onclick="G.endApologize()">明日から、やり直す</button>`;
@@ -2180,7 +2229,7 @@ function renderSunday(){
   const ev = honshimei ? DATA.sundayHonshimei : s.ev;
   const name = honshimei ? CUSTOMERS[s.custId].name : '';
   const title = honshimei ? `😳 ${ev.title}` : `🚶 ${ev.title}`;
-  const banner = sceneBanner(honshimei ? null : 'room');
+  const banner = sceneBanner(honshimei ? `sunday_${s.custId}` : 'room');
   const body = honshimei ? ev.text.replace(/\{name\}/g, name) : ev.text;
 
   if (!s.picked) {
@@ -2206,6 +2255,7 @@ function renderNagashiScold(){
   const ng = CONFIG.nagashi;
   $screen().innerHTML = `
     <h2>😤 閉店後の呼び出し</h2>
+    ${sceneBanner('scold')}
     <div class="story-box bad">${para(DATA.nagashiScoldScene)}</div>
     <div class="note-box"><p>・店長の信頼 ${ng.scoldTrust}（いま ${State.trust}）／メンタル ${ng.scoldMental}</p></div>
     <button class="btn btn-primary" onclick="G.endNagashiScold()">……すみません</button>`;
@@ -2229,6 +2279,7 @@ function renderPuchi(){
   if (ev.money)   eff.push(`${yen(ev.money)}`);
   $screen().innerHTML = `
     <h2>🍃 ${esc(ev.title)}</h2>
+    ${ev.bg ? `<div class="scene-visual"><img src="images/${ev.bg}.webp" alt="" onerror="this.parentElement.style.display='none'"></div>` : ''}
     <div class="story-box">${para(ev.text)}</div>
     ${eff.length ? `<div class="note-box"><p>・${eff.join('／')}</p></div>` : ''}
     <button class="btn btn-primary" onclick="G.endPuchi()">今日も始まる</button>`;
@@ -2260,6 +2311,7 @@ function renderAfter(){
 function renderTobi(){
   $screen().innerHTML = `
     <h2>💸 売掛、飛ぶ</h2>
+    ${sceneBanner('tobi')}
     <div class="story-box bad">${para(DATA.tobiScene)}</div>
     <div class="note-box"><p>・立て替え -${yen(CONFIG.tobi.amount)}／メンタル ${CONFIG.tobi.mental}</p><p>・残高 ${yen(State.money)}</p></div>
     <button class="btn btn-primary" onclick="G.endTobi()">……勉強代、高すぎる</button>`;
@@ -2268,6 +2320,7 @@ function renderTobi(){
 function renderBinge(){
   $screen().innerHTML = `
     <h2>🍜 ストレスの請求書</h2>
+    ${sceneBanner('binge')}
     <div class="story-box">${para(State.bingeScene)}</div>
     <div class="note-box"><p>・暴飲暴食 -${yen(CONFIG.binge.cost)}／メンタル +${CONFIG.binge.mental}</p><p>・残高 ${yen(State.money)}</p></div>
     <button class="btn btn-primary" onclick="G.endBinge()">……明日から本気出す</button>`;
@@ -2278,6 +2331,7 @@ function renderOshiEvent(){
   if (State.oshiResult) {
     $screen().innerHTML = `
       <h2>💖 ${esc(e.title)}</h2>
+      ${sceneBanner('oshi')}
       <div class="story-box">${para(State.oshiResult.text)}</div>
       <div class="note-box"><p>・${esc(State.oshiResult.note)}</p><p>・残高 ${yen(State.money)}</p></div>
       <button class="btn btn-primary" onclick="G.endOshi()">今日も生きていく</button>`;
@@ -2285,6 +2339,7 @@ function renderOshiEvent(){
   }
   $screen().innerHTML = `
     <h2>💖 ${esc(e.title)}</h2>
+    ${sceneBanner('oshi')}
     <div class="story-box">${para(e.desc)}</div>
     <div class="choices">
       <button class="choice" onclick="G.oshiChoice(0)">${esc(e.buyLabel)}（-${yen(e.cost)}）</button>
@@ -2295,6 +2350,7 @@ function renderOshiEvent(){
 function renderFired(){
   $screen().innerHTML = `
     <h2>💔 呼び出し</h2>
+    ${sceneBanner('mensetsu')}
     <div class="story-box">${para(DATA.firedScene)}</div>
     <button class="btn btn-primary" onclick="G.endFired()">……</button>`;
 }
@@ -2302,6 +2358,7 @@ function renderFired(){
 function renderSoutai(){
   $screen().innerHTML = `
     <h2>🌙 早退</h2>
+    ${sceneBanner('soutai')}
     <div class="story-box"><p>次の卓に向かおうとして、脚が止まった。ヒールの中の足が、もう言うことを聞かない。</p><p>店長が小さくため息をついて、裏へ下がるよう顎で示した。……今夜はここまでだ。</p></div>
     <div class="note-box"><p>・店長の信頼 ${CONFIG.trust.soutai}（早退）</p></div>
     <button class="btn btn-primary" onclick="G.endSoutai()">裏へ下がる</button>`;
@@ -2322,15 +2379,25 @@ function renderShukkin(){
     notes.push(`卓が重なる夜は、それだけで削れる（体力 ${ob.stamina * n.extraMains}／メンタル ${ob.mental * n.extraMains}）`);
   }
   notes.push(`今夜の卓数：${n.plan.length}卓（1卓ごとに体力 ${CONFIG.stamina.perTable}）`);
+  if (n.chikoku) notes.push(`遅刻した。店長の信頼 ${CONFIG.trust.chikoku}（いま ${State.trust}）`);
   if (n.eventLabel) notes.push(`${n.eventLabel}──今夜はドリンクバック×${n.drinkMult}`);
   const story = n.mainCount >= 3 ? DATA.shukkinScenes.rush
     : n.mainCount === 2 ? DATA.shukkinScenes.busy
     : inTutorial() ? DATA.shukkinScenes.help
     : DATA.shukkinScenes.normal;
+  // 遅刻した夜は、支度の話より遅刻の話が先に来る
+  const chikokuBox = n.chikoku
+    ? `<div class="story-box bad">${para(n.chikokuText)}</div>` : '';
+  // クリスマスイブなどの特別な夜は、専用ページを挟まずこの画面で説明する
+  const eventBox = n.eventLabel
+    ? `<h3>🎄 ${esc(n.eventLabel)}</h3>
+       <div class="story-box">${para(DATA.nightEventScenes[State.day] || '')}</div>` : '';
   $screen().innerHTML = `
     <h2>🚪 出勤</h2>
     <div class="scene-visual"><img src="images/bg1_final.webp" alt="" onerror="this.parentElement.style.display='none'"></div>
+    ${chikokuBox}
     <div class="story-box">${para(story)}</div>
+    ${eventBox}
     <div class="note-box">${notes.map(t => `<p>・${esc(t)}</p>`).join('')}</div>
     <button class="btn btn-primary" onclick="G.enterFloor()">フロアへ出る</button>`;
 }
@@ -2338,11 +2405,12 @@ function renderShukkin(){
 // ---- 控え室の陰口（同じ店のキャバ嬢に、後ろから刺される夜）----
 function renderWarukuchi(){
   const w = State.warukuchi;
+  const mv = w.mental ?? CONFIG.warukuchi.mental;
   $screen().innerHTML = `
     <h2>🚬 閉店後・控え室</h2>
-    <div class="story-box bad">${para(w.text)}</div>
+    <div class="story-box ${mv > 0 ? 'ok' : 'bad'}">${para(w.text)}</div>
     <div class="note-box">
-      <p>・メンタル ${CONFIG.warukuchi.mental}</p>
+      <p>・メンタル ${mv > 0 ? '+' + mv : mv}</p>
       <p>・${esc(w.note || '数字が伸びるほど、後ろからの風は強くなる')}</p>
     </div>
     <button class="btn btn-primary" onclick="G.endWarukuchi()">${esc(w.btn || '……聞こえなかったことにする')}</button>`;
@@ -2360,16 +2428,6 @@ function renderNight(){
     return;
   }
   if (n.tutorialIdx != null) return renderTutorial();
-  if (n.eventLabel && !n.eventShown) {
-    n.eventShown = true;
-    $screen().innerHTML = `
-      <h2>🎄 ${esc(n.eventLabel)}</h2>
-      ${sceneBanner('club')}
-      <div class="story-box">${para(DATA.nightEventScenes[State.day] || '')}</div>
-      <div class="note-box"><p>・今夜はドリンクバック×${n.drinkMult}</p></div>
-      <button class="btn btn-primary" onclick="render()">フロアへ</button>`;
-    return;
-  }
   if (n.current.kind === 'light') return renderLight();
   return renderMain();
 }
@@ -2387,7 +2445,10 @@ function renderScene(){
   const i = State.scene.idx;
   const pg = sc.pages[i];
   const last = i >= sc.pages.length - 1;
-  const visual = pg.who === 'senpai'
+  // 背景つきの場面は、1ページ目で「どこにいるか」を見せ、2ページ目から話し手の顔に切り替える。
+  // 両方を毎ページ積むと画像だけで画面が埋まり、本文がスクロールの外へ出る
+  const showBg = !!sc.bg && i === 0;
+  const visual = (pg.who === 'senpai' && !showBg)
     ? `<div class="cust-head">
          <span class="cust-name">💄 ${esc(DATA.senpai.title)}</span>
        </div>
@@ -2396,8 +2457,13 @@ function renderScene(){
          <span class="visual-fallback">（${esc(DATA.senpai.name)} の画像）</span>
        </div>`
     : '';
+  // 場面に背景が指定されていれば、語りの上に一枚敷く（images/{bg}.webp）
+  const bg = showBg
+    ? `<div class="scene-visual"><img src="images/${sc.bg}.webp" alt="" onerror="this.parentElement.style.display='none'"></div>`
+    : '';
   $screen().innerHTML = `
     <h2>${esc(sc.title)}</h2>
+    ${bg}
     ${visual}
     <p class="turn-no">${i + 1} / ${sc.pages.length}</p>
     <div class="story-box ${pg.who ? 'cust-line' : 'monologue'}">${para(pg.text)}</div>
@@ -2605,7 +2671,7 @@ function renderMain(){
       ? `<button class="choice choice-nadameru" onclick="G.nadameru()">〈必死になだめる〉（好感度${CONFIG.serve.nadameru.affection}・メンタル${CONFIG.serve.nadameru.mental}）</button>` : '';
     $screen().innerHTML = `${header}
       ${typeHint}
-      <div class="story-box cust-line">${para(turnData(m).line)}</div>
+      <div class="story-box cust-line">${para(turnLine(m))}</div>
       ${moodRead}${kenCue}${mindHint}
       <div class="choices">${nadameru}${choices}</div>`;
     return;
@@ -2615,7 +2681,9 @@ function renderMain(){
     const r = m.result;
     const cls = { seikai:'ok', bonda:'', hazure:'bad', jirai:'bad', nadameru:'', explosion:'bad' }[r.type] || '';
     // 出禁になった夜だけは、数字を見せない（もう数字の話ではない）
-    const delta = (r.type === 'explosion' && m.banned) ? ''
+    // 出禁の夜は数字を見せない（もう数字の話ではない）。ただし出禁になった事実だけは一行で残す
+    const delta = (r.type === 'explosion' && m.banned)
+      ? `<div class="note-box"><p>・${esc(m.cust.name)}は、もう店に来ない</p></div>`
       : `<div class="note-box"><p>・好感度 ${r.dAff >= 0 ? '+' + r.dAff : r.dAff}／メンタル ${r.dMental}</p>${
           r.type === 'explosion' ? `<p>・（好感度は残っている。……出禁ではない。次は、来る）</p>` : ''}</div>`;
     $screen().innerHTML = `${header}
@@ -2627,7 +2695,7 @@ function renderMain(){
 
   if (m.phase === 'topicEvent') {
     $screen().innerHTML = `${header}
-      <div class="story-box ok">${para(DATA.topicEvents[m.topicId])}</div>
+      <div class="story-box ok">${para(topicText(m.cust, m.topicId))}</div>
       <div class="note-box"><p>・話題の種「${esc(DATA.topicNames[m.topicId])}」が刺さった！　好感度 +${CONFIG.topic.affection}／機嫌が良くなった</p><p>・（この話題の種は使い切った。また仕込める）</p></div>
       <button class="btn btn-primary" onclick="G.afterTopic()">会話に戻る</button>`;
     return;
@@ -2743,7 +2811,14 @@ function renderEnding(){
     : State.loseReason === 'fired' ? '💔 GAME OVER — 解雇'
     : State.loseReason === 'ryunen' ? '🎓 GAME OVER — 留年'
     : '🌧 GAME OVER';
+  // エンディングごとに背景を出し分ける（クリア＝ライブ会場のご褒美絵、敗北も理由ごとに専用絵）
+  const endingImg = State.win ? 'ending_clear'
+    : State.loseReason === 'fired' ? 'scene_mensetsu'
+    : State.loseReason === 'ryunen' ? 'scene_ryunen'
+    : 'ending_lose';
+  const visual = `<div class="scene-visual"><img src="images/${endingImg}.webp" alt="" onerror="this.parentElement.style.display='none'"></div>`;
   $screen().innerHTML = `
+    ${visual}
     <h2>${label}</h2>
     <div class="story-box">${para(text)}</div>
     <div class="note-box"><p>・最終貯金：${yen(State.money)}（目標 ${yen(CONFIG.goalMoney)}）</p></div>

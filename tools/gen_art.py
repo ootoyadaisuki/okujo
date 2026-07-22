@@ -173,6 +173,46 @@ def gen_customer(cust_id, only=None):
         print(f"  -> {'OK ' + out if ok else '失敗'}")
 
 
+# 休日に街で鉢合わせる用の一枚絵（客ごと）。服装は店と同じ、グラスは持たせない
+SUNDAY = {
+    "ishi": {
+        "ref": "images/_ref_ishi.webp",
+        "chara": (
+            "参照画像とまったく同じ人物にすること（顔・髪型・体型を完全一致）。"
+            "50代男性、美容クリニック経営者。白髪まじりのオールバック（真っ白ではない）、太い眉、"
+            "日焼けしたツヤ肌、恰幅がいい。服装は参照画像とまったく同じ（白っぽい高級ジャケット、"
+            "開けた襟元に金の柄シャツ、金の指輪、胸ポケットのチーフ）。着替えさせないこと。"
+            "【重要】手には何も持たせない。シャンパングラス・グラス・ボトル・スマホ、いかなる小物も持たせない。両手は自由。"
+        ),
+        "scene": (
+            "日曜、休みの日の八王子駅前の商店街。青空、やわらかい昼の日差し、通りに小さな店が並ぶ庶民的な風景"
+            "（背景は軽くぼかしてよい＝人物が主役）。"
+            "客がキャバ嬢（画面を見るカメラ＝プレイヤー視点）と正面でばったり出くわし、驚いて固まった瞬間。"
+            "表情＝不意打ちで一瞬固まった顔。目を見開き、口が少し開く。夜の余裕たっぷりの顔とは違う、"
+            "素の一瞬。気まずさと驚きが半分ずつ。"
+        ),
+    },
+}
+
+
+def gen_sunday(cust_id, count=1):
+    """休日の街コマ用に、客が私服のまま屋外でばったり会う一枚絵を生成する"""
+    cust = SUNDAY[cust_id]
+    ref = os.path.join(ROOT, cust["ref"])
+    out = os.path.join(ROOT, "images", f"scene_sunday_{cust_id}.webp")
+    prompt = (
+        f"{STYLE}\n"
+        "参照画像＝人物の顔と服装の参考（この人物と完全一致させること）。\n"
+        f"【人物】{cust['chara']}\n"
+        f"【場面】{cust['scene']}\n"
+        "【構図】客を画面の主役として大きく描く：バストアップ〜ウエストアップ、画面中央、"
+        "カメラ目線。引きの構図・人物を小さく隅に置く構図は禁止。"
+    )
+    print(f"生成中: scene_sunday_{cust_id} ...")
+    ok = generate(prompt, [ref], out)
+    print(f"  -> {'OK ' + out if ok else '失敗'}")
+
+
 def gen_senpai():
     """先輩キャバ嬢レイナ（初出勤のチュートリアル役）。客ではないので背景は控室"""
     out = os.path.join(ROOT, "images", "senpai.webp")
@@ -204,6 +244,8 @@ def main():
         gen_backgrounds(only)
     elif target == "senpai":
         gen_senpai()
+    elif target == "sunday":
+        gen_sunday(only or "ishi")
     else:
         gen_customer(target, only)
 

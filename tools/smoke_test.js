@@ -125,6 +125,8 @@ function playthrough(name, policy, quiet) {
       G.pickMenu(idx);
     } else if (State.screen === 'dayResult') {
       if (State.trust < CONFIG.trust.apologizeLine && State.trust > CONFIG.trust.firedLine) G.apologize();
+      // VIPの電話は出勤の直前に割り込む。プレイヤーは無視できないので、シミュレータも必ず通す
+      else if (G.hasMission()) G.toMission();
       else if (policy.nagashi && policy.nagashi(State)) G.toNightNagashi();
       else G.toNight();
     } else if (State.screen === 'skipWork') {
