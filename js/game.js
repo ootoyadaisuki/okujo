@@ -1080,6 +1080,7 @@ function explode(){
   const s = CONFIG.serve;
   const cs = custState(m);
   m.exploded = true;
+  AudioCtl.playSe('explosion');
   if (cs.affection <= s.banAffLine) {
     cs.banned = true;
     m.banned = true;
@@ -1223,6 +1224,7 @@ function advanceTurn(){
           State.night.breakdown.push(`場内指名バック（${m.cust.name}） ${yen(CONFIG.pay.jonaiBack)}`);
           addTrust(CONFIG.trust.jonai, `場内指名（${m.cust.name}）`);
           m.phase = 'jonaiGet';
+          AudioCtl.playSe('success');
         }
       } else {
         settleDrinks(m);
@@ -1852,7 +1854,22 @@ function renderStatus(){
     </div>`;
 }
 
+// BGMゾーン判定：night画面は卓の種別（kind）でwork（フロア全般）/rally（探りラリー中）を切り分ける
+const BGM_WORK_SCREENS = new Set(['shukkin', 'soutai', 'scold', 'warukuchi', 'after']);
+function currentBgmZone(){
+  const s = State.screen;
+  if (s === 'title') return 'title';
+  if (s === 'ending') return 'ending';
+  if (s === 'night') {
+    const kind = State.night && State.night.current && State.night.current.kind;
+    return kind === 'main' ? 'rally' : 'work';
+  }
+  if (BGM_WORK_SCREENS.has(s)) return 'work';
+  return 'daily';
+}
+
 function render(){
+  AudioCtl.setZone(currentBgmZone());
   renderStatus();
   const S = State.screen;
   if (S === 'title') return renderTitle();

@@ -360,3 +360,15 @@ h2 { font-size: 18px; margin: 16px 0 8px; }
   .shimei-call, .shimei-call.noimg .shimei-text { animation: none; }
   .shimei-call::before { animation: none; }
 }
+
+/* ---- ミュートボタン ---- */
+#mute-btn {
+  position: fixed; right: 10px; bottom: 10px; z-index: 100;
+  width: 40px; height: 40px; border-radius: 50%;
+  background: rgba(31, 18, 48, .9);
+  border: 1px solid #3a2755;
+  color: var(--text);
+  font-size: 18px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}

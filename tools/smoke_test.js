@@ -11,10 +11,12 @@ function makeContext() {
   const sandbox = {
     document: { getElementById: id => els[id], addEventListener: () => {} },
     window: { addEventListener: () => {} },
+    localStorage: { getItem: () => null, setItem: () => {} },
+    Audio: class { play() { return Promise.resolve(); } },
     console, Math, JSON,
   };
   vm.createContext(sandbox);
-  for (const f of ['js/config.js', 'js/data.js', 'js/customers.js', 'js/game.js']) {
+  for (const f of ['js/config.js', 'js/data.js', 'js/customers.js', 'js/audio.js', 'js/game.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', f), 'utf8'), sandbox, { filename: f });
   }
   return sandbox;
