@@ -564,7 +564,9 @@ for (let i = 0; i < 12; i++) playthrough(`到達計測${i}`, {
 //     叩き台では503卓中87%で「最長＝正解」だった＝長いのを押すだけで読まずに勝てる。
 //     ただし地雷ばかり長くすると今度は「長いのを避ける」で勝ててしまう＝テルの反転。
 //     なので特定の type が最長スロットを独占していないかを見る。どの型も40%以下が要件。
-const REWRITTEN = ['ishi', 'goinkyo', 'kacho', 'shacho', 'shitencho', 'geinin', 'zeirishi', 'yakyu', 'kaicho', 'sekiyu'];   // ← 全エピソードを決定稿にした客を足していく
+// 全12人が決定稿。以降どの客も、最長スロットの型が40%を超えるとテストが落ちる
+const REWRITTEN = ['ishi', 'goinkyo', 'kacho', 'shacho', 'shitencho', 'geinin',
+  'zeirishi', 'yakyu', 'kaicho', 'sekiyu', 'onzoshi', 'geino'];   // ← 全エピソードを決定稿にした客を足していく
 {
   const CUST = vm.runInContext('CUSTOMERS', makeContext());
   const fail = [];
