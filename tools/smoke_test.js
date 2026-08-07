@@ -560,6 +560,47 @@ for (let i = 0; i < 12; i++) playthrough(`到達計測${i}`, {
   console.log(`[組合せの重複 ] ${REPEAT.tables} 卓中 ${REPEAT.dup} が既出の「探り＋場内」（重複率 ${pct}%）`);
 }
 
+// 12) 文字数テル：文字数から答えが割れてしまわないか
+//     叩き台では503卓中87%で「最長＝正解」だった＝長いのを押すだけで読まずに勝てる。
+//     ただし地雷ばかり長くすると今度は「長いのを避ける」で勝ててしまう＝テルの反転。
+//     なので特定の type が最長スロットを独占していないかを見る。どの型も40%以下が要件。
+const REWRITTEN = [];   // ← 全エピソードを決定稿にした客を足していく
+{
+  const CUST = vm.runInContext('CUSTOMERS', makeContext());
+  const fail = [];
+  console.log('');
+  for (const id of Object.keys(CUST)) {
+    const count = { seikai: 0, bonda: 0, hazure: 0, jirai: 0, tie: 0 };
+    let tables = 0;
+    for (const ep of CUST[id].episodes || []) {
+      for (const kind of ['first', 'jonai']) {
+        for (const u of ep[kind] || []) {
+          const chs = u.choices || [];
+          if (chs.length < 2) continue;
+          const max = Math.max(...chs.map(c => c.text.length));
+          const longest = chs.filter(c => c.text.length === max);
+          tables++;
+          // 同率最長が複数あるなら文字数から型は割れない＝tie（セーフ）
+          count[longest.length === 1 ? longest[0].type : 'tie']++;
+        }
+      }
+    }
+    if (!tables) continue;
+    const worst = ['seikai', 'bonda', 'hazure', 'jirai']
+      .map(t => [t, count[t] / tables * 100]).sort((a, b) => b[1] - a[1])[0];
+    const done = REWRITTEN.includes(id);
+    const ok = worst[1] <= 40;
+    const mark = done ? (ok ? '✅' : '❌') : (ok ? '  ' : '⚠ ');
+    const dist = ['seikai', 'bonda', 'hazure', 'jirai', 'tie']
+      .map(t => `${t.slice(0, 4)} ${String(Math.round(count[t] / tables * 100)).padStart(3)}%`).join('  ');
+    console.log(`[文字数テル] ${mark} ${id.padEnd(10)} ${String(tables).padStart(3)}卓  最長の型: ${dist}`);
+    if (done && !ok) fail.push(`${id}(${worst[0]} ${worst[1].toFixed(0)}%)`);
+  }
+  if (fail.length) throw new Error(
+    `決定稿のはずの客で、最長の選択肢の型が偏っている: ${fail.join(', ')}`
+    + ` — 文字数から答えが割れる。どの型も40%以下に散らすこと。`);
+}
+
 {
   const avg = midRepeat.reduce((a, b) => a + b, 0) / (midRepeat.length || 1);
   if (avg > 0) console.log(`\n⚠ 中級プレイの探り重複 ${(avg * 100).toFixed(1)}%（要件は0%）`
