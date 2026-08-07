@@ -892,6 +892,12 @@ G.pickLight = function(orderIdx){
   const cur = State.night.current;
   const ch = cur.table.rallies[cur.rally].choices[cur.order[orderIdx]];
   cur.picked = ch;
+  // モブ卓の選択肢には type が無いので、結果から回答音を決める。
+  // 売掛を通した／メンタルが大きく削れた＝地雷、注文が伸びた＝正解
+  AudioCtl.playSe(
+    (ch.flag === 'tobi' || ch.mental <= -6) ? 'jirai'
+      : ch.drinks >= 2 ? 'seikai'
+      : ch.drinks === 1 ? 'bonda' : 'hazure');
   if (ch.flag === 'tobi') State.tobiDay = State.day + CONFIG.tobi.delayDays;  // 売掛を通してしまった
   const amount = ch.drinks * CONFIG.pay.drinkBack * (State.night.drinkMult || 1);
   cur.amount = amount;
@@ -1029,10 +1035,12 @@ G.pickChoice = function(orderIdx){
   const ch = m.effChoices[m.choiceOrder[orderIdx]];
 
   // 機嫌〈険〉でさらに地雷 or ハズレ → 爆発
+  // （ここで抜けるので、爆発のズコーと下の回答音が二重に鳴ることはない）
   if (moodOf(m) === 'ken' && (ch.type === 'jirai' || ch.type === 'hazure')) {
     explode();
     return;
   }
+  AudioCtl.playSe(ch.type);   // seikai=チン / bonda=ボッ / hazure=ボ、ト / jirai=ズッ
 
   const dAff = affGain(ch.type, rallyNo(m));
   const dMental = mentalCost(ch.type);
@@ -1061,6 +1069,7 @@ G.pickChoice = function(orderIdx){
 G.nadameru = function(){
   const m = State.night.current;
   const c = CONFIG.serve.nadameru;
+  AudioCtl.playSe('bonda');   // なだめるも .choice なので、鳴らさないと無音になる
   custState(m).affection = clampAff(custState(m).affection + c.affection);
   State.mental = clampMental(State.mental + c.mental);
   m.tension = 0;               // なだめて機嫌〈普〉＝テンション0へ
@@ -2626,7 +2635,7 @@ function renderLight(){
       ${mobImg}
       <div class="story-box cust-line">${para(r.line)}</div>
       <div class="choices">${cur.order.map((idx, oi) =>
-        `<button class="choice" onclick="G.pickLight(${oi})">${esc(r.choices[idx].text)}</button>`).join('')}</div>`;
+        `<button class="choice choice-answer" onclick="G.pickLight(${oi})">${esc(r.choices[idx].text)}</button>`).join('')}</div>`;
   } else {
     const bonusBox = cur.bonus
       ? `<div class="story-box ok"><p>「──あ、あと${esc(cur.bonus.label)}ひとつ」\n思わぬ追加注文だ。（${yen(cur.bonus.price)}・バック +${yen(cur.bonus.back)}）</p></div>` : '';
@@ -2736,9 +2745,9 @@ function renderMain(){
         ? `<p class="mind-hint">${esc(DATA.tiredMindHint)}</p>` : '';
     const mark = i => State.stats.intel >= CONFIG.intel.jiraiMarkLine && m.effChoices[i].type === 'jirai' ? ' <span class="jirai-mark">⚠</span>' : '';
     const choices = m.choiceOrder.map((idx, oi) =>
-      `<button class="choice" onclick="G.pickChoice(${oi})">${esc(m.effChoices[idx].text)}${mark(idx)}</button>`).join('');
+      `<button class="choice choice-answer" onclick="G.pickChoice(${oi})">${esc(m.effChoices[idx].text)}${mark(idx)}</button>`).join('');
     const nadameru = m.nadameruWindow
-      ? `<button class="choice choice-nadameru" onclick="G.nadameru()">〈必死になだめる〉（好感度${CONFIG.serve.nadameru.affection}・メンタル${CONFIG.serve.nadameru.mental}）</button>` : '';
+      ? `<button class="choice choice-answer choice-nadameru" onclick="G.nadameru()">〈必死になだめる〉（好感度${CONFIG.serve.nadameru.affection}・メンタル${CONFIG.serve.nadameru.mental}）</button>` : '';
     $screen().innerHTML = `${header}
       ${typeHint}
       <div class="story-box cust-line">${para(turnLine(m))}</div>

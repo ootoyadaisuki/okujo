@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>億女 — 音の試聴</title>
+<style>
+  body { margin:0; padding:28px 20px 60px; background:#140d18; color:#f2e9f5;
+         font-family:-apple-system,"Hiragino Sans",sans-serif; line-height:1.7; }
+  .wrap { max-width:560px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 4px; color:#ff8fc4; }
+  p.lead { font-size:13px; color:#b9a6c4; margin:0 0 24px; }
+  h2 { font-size:14px; color:#b9a6c4; margin:28px 0 10px; font-weight:600;
+       border-bottom:1px solid #33253c; padding-bottom:6px; }
+  button { display:block; width:100%; margin:0 0 8px; padding:13px 16px; text-align:left;
+           background:#241a2c; color:#f2e9f5; border:1px solid #3d2c48; border-radius:10px;
+           font-size:15px; font-family:inherit; cursor:pointer; transition:.15s; }
+  button:hover { background:#32243d; border-color:#6b4a7e; }
+  button.on { background:#7d2f5c; border-color:#ff8fc4; }
+  button small { display:block; font-size:12px; color:#b9a6c4; margin-top:3px; }
+  button.on small { color:#ffd5e8; }
+  .row { display:flex; gap:8px; }
+  .row button { flex:1; text-align:center; }
+  .stop { background:#2b2030; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>億女 — 音の試聴</h1>
+  <p class="lead">BGMは5曲とも <code>js/audio.js</code> の <code>SONGS</code> に譜面で書いてあります。<br>
+     直したら、このページを再読み込みするだけで反映されます。</p>
+
+  <h2>BGM（ゾーン）</h2>
+  <div id="bgm"></div>
+  <button class="stop" onclick="AudioCtl.setZone('__stop__');mark(null)">■ 止める</button>
+
+  <h2>回答音（接客中・選択肢を押した瞬間）</h2>
+  <div class="row">
+    <button onclick="AudioCtl.playSe('seikai')">チン<small>正解</small></button>
+    <button onclick="AudioCtl.playSe('bonda')">ボッ<small>凡打</small></button>
+    <button onclick="AudioCtl.playSe('hazure')">ボ、ト<small>ハズレ</small></button>
+    <button onclick="AudioCtl.playSe('jirai')">ズッ<small>地雷</small></button>
+  </div>
+
+  <h2>そのほか</h2>
+  <div class="row">
+    <button onclick="AudioCtl.playSe('click')">ポッ<small>ボタン</small></button>
+    <button onclick="AudioCtl.playSe('success')">チン♪<small>場内指名</small></button>
+    <button onclick="AudioCtl.playSe('explosion')">ズコー<small>爆発</small></button>
+  </div>
+</div>
+
+<script>
+// 譜面を直しては聴き直すページなので、ブラウザのキャッシュを必ず外す。
+// （これが無いと audio.js を書き換えても古い音が鳴り続ける）
+document.write('<scr' + 'ipt src="../js/audio.js?t=' + Date.now() + '"><\/scr' + 'ipt>');
+</script>
+<script>
+const ZONES = [
+  ['title',  'タイトル「借り物のドレス」',      'Dm7-G7-Cmaj7-A7 の循環。まだ何も始まっていないのに、少し得意げ'],
+  ['daily',  '昼パート「一日にできることは、ひとつだけ」', 'いちばんコミカル寄り。明るく跳ねる'],
+  ['work',   '出勤・フロア「5階のピアノバー」', '店の地の音。ベースが歩く'],
+  ['rally',  '卓の会話中「探り」',              'いちばん長く聞く曲。音数を削って喋りの邪魔をしない'],
+  ['ending', 'エンディング「100日」',           'タイトルと同じ音型を、速さと編成だけ落としたもの'],
+];
+const host = document.getElementById('bgm');
+for (const [id, name, memo] of ZONES) {
+  const b = document.createElement('button');
+  b.dataset.zone = id;
+  b.innerHTML = name + '<small>' + memo + '</small>';
+  b.onclick = () => { AudioCtl.setZone('__stop__'); AudioCtl.setZone(id); mark(id); };
+  host.appendChild(b);
+}
+function mark(id) {
+  for (const b of host.children) b.classList.toggle('on', b.dataset.zone === id);
+}
+</script>
+</body>
+</html>
