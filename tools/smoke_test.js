@@ -25,6 +25,7 @@ function makeContext() {
 // 不合格はここに溜めて、全テストを走らせきってから最後にまとめて投げる。
 // 途中で throw すると、その先のチェックが一度も動かなくなるため。
 const FAILURES = [];
+const CUST_ALL = vm.runInContext('CUSTOMERS', makeContext());   // 定義の参照用
 
 // policy:
 //   dayCmd(State) → 昼コマンドid
@@ -98,6 +99,7 @@ function playthrough(name, policy, quiet) {
   const ctx = makeContext();
   const { G, State, CONFIG, DATA } = vm.runInContext('({ G, State, CONFIG, DATA })', ctx);
   G.newGame();
+  if (policy.runNo) State.runNo = policy.runNo;   // 2周目以降にしか来ない客を出す
   // イントロスキップ→初日は昼なしで即出勤（本編と同じ流れ）
   State.dayResult = { notes: [], story: '' };
   State.screen = 'dayResult';
@@ -404,6 +406,29 @@ playthrough('トリアージ　　', {
   choose: (cs, S, m) => m.cust.id === 'ishi' ? best(cs) : coastPick(cs),
   onedari: stdOnedari, useNadameru: true,
 });
+
+// 2.3) 2周目プレイ：fromRun で2周目からしか来ない客（常連・ハシヅメ）を踏む。
+//      この客は場内ユニットを1本も持たない＝場内が発生しないルートも同時に通る。
+{
+  const r = playthrough('2周目　　　　', {
+    dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
+    choose: (cs) => Math.random() < 0.6 ? best(cs) : coastPick(cs),
+    onedari: stdOnedari, useNadameru: true, runNo: 2,
+  });
+  const g = r.State.cust.gachikoi;
+  if (!g || g.visits === 0) throw new Error('2周目なのに、2周目からの客（gachikoi）が一度も来なかった');
+  if (g.visits > CUST_ALL.gachikoi.visitCap)
+    throw new Error(`visitCap を超えて来店した（${g.visits} > ${CUST_ALL.gachikoi.visitCap}）`);
+  console.log(`[2周目　　　　] 常連・ハシヅメ 来店${g.visits}回（上限${CUST_ALL.gachikoi.visitCap}）`);
+}
+// 1周目には出ないことも確かめる
+{
+  const r = playthrough('x', {
+    dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
+    choose: best, onedari: stdOnedari, useNadameru: true,
+  }, true);
+  if (r.State.cust.gachikoi.visits > 0) throw new Error('1周目なのに2周目の客が来た（fromRun が効いていない）');
+}
 
 // 2.4) セーブスカム対策：乱数がセーブに乗っているか。
 //      Math.random() を直に使っていた頃は、夜の結果を全部見てから再読み込みして

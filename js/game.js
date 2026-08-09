@@ -567,9 +567,13 @@ G.endFired = function(){
 // 今夜の指名候補を選ぶ：未消化エピソードのある客を、来店が古い順に。信頼が低いと店長が回してくれない
 // スポット客の卒業判定：成功（場内指名成立）なら2回目まで来る。3回目はない。初回失敗ならそれっきり。
 function spotGraduated(id){
-  if (CUSTOMERS[id].tier !== 'spot') return false;
+  const c = CUSTOMERS[id];
+  if (c.tier !== 'spot') return false;
   const cs = State.cust[id];
-  if (cs.visits >= 2) return true;
+  if (cs.visits >= (c.visitCap || 2)) return true;
+  // 普通のスポット客は、初回に場内を取れなければ二度と来ない。
+  // sticky の客は来る。何をしても、何をしなくても来る。それがこの客の中身
+  if (c.sticky) return false;
   return cs.visits >= 1 && !cs.lastSuccess;
 }
 
@@ -1289,8 +1293,11 @@ function advanceTurn(){
   const s = CONFIG.serve;
   if (m.stage === 'first') {
     if (m.turn + 1 >= s.firstRallies) {
-      // 場内指名判定：正答率60%以上
-      if (m.correct / s.firstRallies >= s.jonaiRate) {
+      // 場内指名判定：正答率60%以上。
+      // ただし場内の会話を1本も持っていない客は、そもそも場内を買わない
+      // （金を落とさない客＝ガチ恋のハシヅメ。追加料金の話になると、彼は財布を見ない）
+      const hasJonai = unitsOf(m.cust, 'jonai').length > 0;
+      if (hasJonai && m.correct / s.firstRallies >= s.jonaiRate) {
         custState(m).lastSuccess = true;
         if (m.honshimei) {
           // 本指名客に場内指名は発生しない。会話はそのまま深い段へ滑り込む
