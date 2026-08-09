@@ -887,10 +887,18 @@ const MAXES = [
     for (const ep of CUST[id].episodes || []) {
       for (const kind of ['first', 'jonai']) {
         for (const u of ep[kind] || []) {
-          const chs = u.choices || [];
+          let chs = u.choices || [];
           if (chs.length !== 4) continue;
+          if (!chs.some(c => c.type === 'seikai')) continue;
+          // データ上は正解がいつも先頭に書いてある。特徴が同点のとき argmax が
+          // 先頭を選ぶと「並び順」という実在しない手がかりで当ててしまうので、
+          // 実際の表示と同じようにシャッフルしてから特徴を作る（game.js の shuffleChoices 相当）
+          chs = chs.slice();
+          for (let i = chs.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [chs[i], chs[j]] = [chs[j], chs[i]];
+          }
           const y = chs.findIndex(c => c.type === 'seikai');
-          if (y < 0) continue;
           const order = chs.map((c, i) => [c.text.length, i]).sort((a, b) => b[0] - a[0]);
           const rank = {}; order.forEach(([, i], r) => { rank[i] = r; });
           const X = chs.map((c, i) => {
@@ -915,8 +923,8 @@ const MAXES = [
     for (let d = 0; d < D; d++) sd[d] = Math.sqrt(sd[d] / n) || 1;
 
     const w = new Array(D).fill(0);
-    const lr = 0.5, L2 = 1e-3;
-    for (let ep = 0; ep < 300; ep++) {
+    const lr = 1.0, L2 = 3e-4;
+    for (let ep = 0; ep < 1200; ep++) {
       const g = new Array(D).fill(0);
       for (const i of idx) {
         const { X, y } = TABLES[i];
