@@ -77,9 +77,20 @@ html, body {
 .st-day { color: var(--dim); }
 .st-money { color: var(--gold); font-weight: bold; font-size: 15px; }
 .st-money small, .st-day small { color: var(--dim); font-weight: normal; }
-.st-bars { margin-top: 4px; }
-.st-meter { display: flex; align-items: center; gap: 4px; color: var(--dim); font-size: 12px; }
-.st-bars .bar { width: 72px; }
+/* ステータスの6項目。flex＋space-between だと、狭い画面で3つ目だけ折り返して
+   残り2つが左右に散り、行ごとに位置が揃わなかった。3列のグリッドに固定する */
+.st-bars {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px 8px;
+  margin-top: 4px;
+}
+.st-meter {
+  display: flex; align-items: center; gap: 4px; min-width: 0;
+  color: var(--dim); font-size: 12px; white-space: nowrap;
+}
+/* バーは余った幅を分け合う。ラベルの長さ（容姿／店長の信頼）が違っても列は揃う */
+.st-bars .bar { flex: 1 1 auto; width: auto; min-width: 28px; }
 .story-box.monologue {
   border-color: #4a3a6b;
   background: linear-gradient(160deg, #1c1230, #241a3a);
