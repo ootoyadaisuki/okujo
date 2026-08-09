@@ -1797,7 +1797,12 @@ function enterDay(){
     return;
   }
   // 母イベント（対立→和解の小さな縦軸。部屋にいる朝、電話やLINEが来る）
-  const me = (DATA.motherEvents || []).find(e => e.day === State.day && !State.motherDone[e.day]);
+  // 日付ちょうど、または「orMoney まで貯まった朝」（minDay 以降）で撃つ。
+  // 日付固定のままだと、和解が最後まで届かない人が出る
+  const me = (DATA.motherEvents || []).find(e => !State.motherDone[e.day]
+    && (!e.after || State.motherDone[e.after])   // 順番が入れ替わらないように（和解が対立より先に来ない）
+    && (e.day === State.day
+        || (e.orMoney && State.money >= e.orMoney && State.day >= (e.minDay || 0) && State.day <= e.day)));
   if (me) {
     State.motherPicked = null;
     State.motherNotes = [];
@@ -1949,7 +1954,10 @@ G.motherChoice = function(i){
 };
 
 G.endMother = function(){
-  State.motherDone[State.day] = true;
+  // 「その日」ではなくイベント側の day で消し込む。
+  // 日付より早く撃つ経路（orMoney）ができたので、State.day で記録すると
+  // 消し込みが噛み合わず、同じイベントが毎朝ループする
+  State.motherDone[(State.motherEvent || {}).day ?? State.day] = true;
   State.motherEvent = null;
   State.motherPicked = null;
   enterDay();
