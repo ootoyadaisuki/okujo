@@ -594,13 +594,22 @@ const FLAGS = [
   ['「ね」で終わる',      t => /ね[〜ー]?[。！？…]*$/.test(core(t))],
   ['問いかけで終わる',    t => /[？?][」）]?$/.test(t)],
   ['敬語でない（タメ口）', t => !/(です|ます|ません|でした|ましょ)/.test(t)],
+  ['句点「。」を含む',    t => t.includes('。')],
+  ['「──」を含む',       t => t.includes('──')],
+  ['「〜」を含む',        t => t.includes('〜')],
+  ['「もん」系の終助詞',  t => /(もんね|ですもん|もん[。！？」]?$)/.test(t)],
+  ['相手の未来を語る',    t => /(一生|これから|将来|この先)/.test(t)],
 ];
-// 卓の中で最大／最小のものを指すもの（同点なら発火しない）
-const RANKS = [
-  ['最長',            t => t.length,                     +1],
-  ['最短',            t => t.length,                     -1],
-  ['読点がいちばん多い', t => (t.match(/、/g) || []).length, +1],
-  ['「…」がいちばん多い', t => (t.match(/…/g) || []).length,  +1],
+// 卓の中で長さがk番目のものを指すもの。
+// 「最長＝正解」を潰すと正解が2位へ移るだけ（実測: 1位38%→2位55%）なので、
+// 順位は総当たりで測る。ここを1位だけにしていたせいで2位テルを見逃した。
+const RANKS = [];
+for (const k of [1, 2, 3, 4]) RANKS.push([`長さ${k}位`, k]);
+// 順位ではなく最大値を指すもの（同点なら発火しない）
+const MAXES = [
+  ['読点がいちばん多い', t => (t.match(/、/g) || []).length],
+  ['「…」がいちばん多い', t => (t.match(/…/g) || []).length],
+  ['句点がいちばん多い',  t => (t.match(/。/g) || []).length],
 ];
 
 {
@@ -633,8 +642,16 @@ const RANKS = [
       const hit = chs.filter(ch => fn(ch.text));
       return hit.length === 1 ? hit[0] : null;
     }]),
-    ...RANKS.map(([name, score, dir]) => [name, chs => {
-      const vals = chs.map(ch => score(ch.text) * dir);
+    ...RANKS.map(([name, k]) => [name, chs => {
+      if (chs.length < k) return null;
+      const sorted = [...chs].sort((a, b) => b.text.length - a.text.length);
+      // 同じ長さが並んでいたら順位が決まらない＝発火しない
+      const t = sorted[k - 1];
+      if (chs.filter(c => c.text.length === t.text.length).length > 1) return null;
+      return t;
+    }]),
+    ...MAXES.map(([name, score]) => [name, chs => {
+      const vals = chs.map(ch => score(ch.text));
       const best = Math.max(...vals);
       const hit = chs.filter((_, i) => vals[i] === best);
       return hit.length === 1 ? hit[0] : null;
@@ -665,6 +682,58 @@ const RANKS = [
   if (tells.length) FAILURES.push(
     `本文を読まずに勝てるテルが残っている:\n    ${tells.join('\n    ')}`
     + `\n  → その特徴を、正解だけでなく他の型にも同じくらい配ること。`);
+}
+
+// 12a) モブ卓・ヘルプ卓・変な客のテル検出。
+//      これらの選択肢は type を持たないため、上のテル検出は一度も見ていなかった。
+//      だが研修（Day1-2）はモブ卓しか出ないので、**このゲームの第一印象はここで決まる**。
+//      型の代わりに「drinks が最大の選択肢＝その卓の正解」とみなして同じ物差しを当てる。
+{
+  const D = vm.runInContext('DATA', makeContext());
+  const CORPORA = [['モブ卓', D.mobTables], ['ヘルプ卓', D.lightTables], ['変な客', D.weirdTables]];
+  const lines = [];
+  for (const [label, src] of CORPORA) {
+    const TABLES = [];
+    for (const t of src || []) for (const u of (t.rallies || t)) {
+      if ((u.choices || []).length >= 2) TABLES.push(u.choices);
+    }
+    if (!TABLES.length) continue;
+    const isBest = (chs, ch) => ch.drinks === Math.max(...chs.map(c => c.drinks || 0));
+    // 当てずっぽうの基準：ランダムに1本選んだとき最良を引く確率
+    const base = TABLES.reduce((a, chs) =>
+      a + chs.filter(c => isBest(chs, c)).length / chs.length, 0) / TABLES.length * 100;
+    // 減点がまったく無い卓は「読まなくていい卓」。これ自体が設計の穴
+    const anyMental = TABLES.some(chs => chs.some(c => c.mental));
+    const rows = [];
+    for (const [name, k] of RANKS) {
+      let fired = 0, hitBest = 0, hitTobi = 0;
+      for (const chs of TABLES) {
+        if (chs.length < k) continue;
+        const sorted = [...chs].sort((a, b) => b.text.length - a.text.length);
+        const t = sorted[k - 1];
+        if (chs.filter(c => c.text.length === t.text.length).length > 1) continue;
+        fired++;
+        if (isBest(chs, t)) hitBest++;
+        if (t.flag === 'tobi') hitTobi++;
+      }
+      if (!fired) continue;
+      rows.push({ name, cov: fired / TABLES.length * 100, best: hitBest / fired * 100, tobi: hitTobi / fired * 100 });
+    }
+    const worst = rows.slice().sort((a, b) => b.best - a.best)[0];
+    console.log(`\n[テル検出/${label}] ${TABLES.length}卓。当てずっぽうで最良を引く率 ${base.toFixed(0)}%`
+      + `（+20pt超で不合格）${anyMental ? '' : '  ⚠ この卓群には減点が一つも無い'}`);
+    for (const r of rows) {
+      const bad = r.best > base + 20;
+      console.log(`  ${bad ? '❌' : '✅'} ${r.name.padEnd(10)} 発火${String(Math.round(r.cov)).padStart(3)}%`
+        + `  最良を引く率 ${String(Math.round(r.best)).padStart(3)}%  売掛を踏む率 ${Math.round(r.tobi)}%`);
+    }
+    if (worst && worst.best > base + 20) lines.push(
+      `${label}: 「${worst.name}」を押すだけで最良${worst.best.toFixed(0)}%（当てずっぽう${base.toFixed(0)}%）`);
+    if (!anyMental) lines.push(`${label}: 減点のある選択肢が一つも無い＝失敗できない卓になっている`);
+  }
+  if (lines.length) FAILURES.push(
+    `type を持たない卓にもテル／緩みがある:\n    ${lines.join('\n    ')}`
+    + `\n  → 研修はモブ卓だけなので、ここが「読まなくていい」とゲームの第一印象が決まる。`);
 }
 
 // 12b) 客ごとの偏り：全体で散っていても、特定の客だけ「最長＝正解」だと、その客の卓で読まれる
