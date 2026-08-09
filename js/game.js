@@ -169,13 +169,12 @@ G.continueGame = function(){
   if (typeof State.seed !== 'number') State.seed = newSeed();   // 乱数の種を持たない旧セーブ
   for (const id of Object.keys(CUSTOMERS)) {
     if (!State.cust[id]) {
-      State.cust[id] = { affection: CONFIG.serve.affectionStart, banned: false, met: false, epIdx: 0, lastVisit: 0, visits: 0, lastSuccess: false, missionIdx: 0, donperiCount: 0, flags: [], usedFirst: [], usedJonai: [], usedPairs: [], jonaiCount: 0 };
+      State.cust[id] = { affection: CONFIG.serve.affectionStart, banned: false, met: false, epIdx: 0, lastVisit: 0, visits: 0, lastSuccess: false, missionIdx: 0, flags: [], usedFirst: [], usedJonai: [], usedPairs: [], jonaiCount: 0 };
     } else {
       const c = State.cust[id];
       if (c.visits == null) c.visits = 0;
       if (c.lastSuccess == null) c.lastSuccess = false;
       if (c.missionIdx == null) c.missionIdx = 0;
-      if (c.donperiCount == null) c.donperiCount = 0;
       if (!Array.isArray(c.flags)) c.flags = [];
       if (!Array.isArray(c.usedFirst)) c.usedFirst = [];
       if (!Array.isArray(c.usedJonai)) c.usedJonai = [];
@@ -193,7 +192,7 @@ G.continueGame = function(){
 G.newGame = function(){
   const cust = {};
   for (const id of Object.keys(CUSTOMERS)) {
-    cust[id] = { affection: CONFIG.serve.affectionStart, banned: false, met: false, epIdx: 0, lastVisit: 0, visits: 0, lastSuccess: false, missionIdx: 0, donperiCount: 0, flags: [], usedFirst: [], usedJonai: [], usedPairs: [], jonaiCount: 0 };
+    cust[id] = { affection: CONFIG.serve.affectionStart, banned: false, met: false, epIdx: 0, lastVisit: 0, visits: 0, lastSuccess: false, missionIdx: 0, flags: [], usedFirst: [], usedJonai: [], usedPairs: [], jonaiCount: 0 };
   }
   Object.assign(State, {
     screen: 'intro', introIdx: 0,
@@ -1397,6 +1396,10 @@ function buildOffer(m){
   const capIdx = capClassIdx(m.cust);
   let loIdx = floorClassIdx(m.cust);
   let topIdx = capIdx;
+  // 最上級は1卓1本まで。2本目は下の階級しか出てこない
+  //（一律30%バックの頃は、22万×2本で1卓13.2万＝目標の13.2%が1卓で立っていた）
+  const eliteIdx = CLASS_ORDER.indexOf('elite');
+  if ((m.soldElite || 0) >= CONFIG.pay.eliteMaxPerTable) topIdx = Math.min(topIdx, eliteIdx - 1);
   // 階級の幅が狭いと4本揃わない（ハイクラスは3銘柄しかない）。
   // まず上へ、それでも足りなければ下へ広げる。下限持ちの客でも、まず上を試すのが筋。
   const stock = () => { let c = 0; for (let i = loIdx; i <= topIdx; i++) c += drinksOf(i).length; return c; };
@@ -1474,6 +1477,8 @@ G.onedariPick = function(idx){
   const back = Math.round(price * CONFIG.pay.bottleBackRate);
   const rate = Math.round(CONFIG.pay.bottleBackRate * 100);
   State.night.earned += back;
+  m.tableBack = (m.tableBack || 0) + back;        // この卓で立ったバックの合計
+  State.night.lastBack = back;
   State.night.breakdown.push(`${pick.name}バック${rate}%（${m.cust.name}） ${yen(back)}`);
   addTrust(CONFIG.trust.bottle[pick.cls], `ボトルを入れた（${pick.name}）`);
   m.sold = pick.cls;
@@ -1481,7 +1486,7 @@ G.onedariPick = function(idx){
   m.soldCount = (m.soldCount || 0) + 1;
   State.night.bottlesTonight = (State.night.bottlesTonight || 0) + 1;   // 控え室の噂の燃料
   m.streakSinceSale = 0;
-  if (pick.clsIdx === CLASS_ORDER.indexOf('elite')) cs.donperiCount = (cs.donperiCount || 0) + 1;
+  if (pick.clsIdx === CLASS_ORDER.indexOf('elite')) m.soldElite = (m.soldElite || 0) + 1;
   cs.affection = clampAff(cs.affection + o.cashInDrop[pick.cls]);
 
   // ヒント：もっと上を頼めたのに、ずいぶん下で手を打った夜。
