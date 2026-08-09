@@ -1527,6 +1527,7 @@ G.onedariPick = function(idx){
   m.soldName = pick.name;
   m.soldCount = (m.soldCount || 0) + 1;
   State.night.bottlesTonight = (State.night.bottlesTonight || 0) + 1;   // 控え室の噂の燃料
+  State.salesTotal = (State.salesTotal || 0) + 1;                      // 通算。陰口を撃つ資格の判定に使う
   m.streakSinceSale = 0;
   if (pick.clsIdx === CLASS_ORDER.indexOf('elite')) m.soldElite = (m.soldElite || 0) + 1;
   cs.affection = clampAff(cs.affection + o.cashInDrop[pick.cls]);
@@ -1588,13 +1589,20 @@ function endNight(){
   // （プレイヤーの失敗ではなく、勝ち始めた者に必ず来るコスト）
   const wk = CONFIG.warukuchi;
   const soldTonight = (nn.bottlesTonight || 0);
+  // 「勝ち始めた者に来る税」なのに、日数と乱数しか見ていなかった。
+  // 結果、ボトル0本・場内0回のまま100日負ける打ち手にも平均6.9回/周 出て、
+  // 「シャンパン入れてもらえるのは実力じゃないでしょ」が、一度も入れていない主人公に飛んでいた。
+  const jonaiTotal = Object.values(State.cust).reduce((a, c) => a + (c.jonaiCount || 0), 0);
+  const salesTotal = State.salesTotal || 0;
+  const enviable = jonaiTotal >= wk.needJonai || salesTotal >= wk.needSales;
   if (!nn.warukuchiDone && State.screen !== 'soutai'
-      && State.day >= wk.fromDay
+      && State.day >= wk.fromDay && enviable
       && State.day - (State.lastWarukuchi || -99) >= wk.minGap
       && rnd() < wk.chance + soldTonight * wk.bonusPerBottle) {
     nn.warukuchiDone = true;
     State.lastWarukuchi = State.day;
-    const list = DATA.warukuchiScenes;
+    // 的が実績と合う場面だけを候補にする（シャンパンの噂は、一本も入れていない夜には出さない）
+    const list = DATA.warukuchiScenes.filter(w => !w.needSales || salesTotal >= w.needSales);
     State.warukuchi = list[(State.warukuchiIdx || 0) % list.length];
     State.warukuchiIdx = (State.warukuchiIdx || 0) + 1;
     // 場面ごとに mental を持てる。先輩に助けられる夜は、削られるのではなく回復する
