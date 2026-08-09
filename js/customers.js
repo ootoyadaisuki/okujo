@@ -777,7 +777,7 @@ const CUSTOMERS = {
 
       // ---------- 場内：今日は君の話を聞く ----------
       {
-        jonaiMeta: { id: 'ishi_j_kimi' },
+        jonaiMeta: { id: 'ishi_j_kimi', gives: ['ishi_yakusoku'] },   // 出口の約束＝エンディングで回収する
         jonai: [
           {
             line: '「今日はさ、俺の話やめる。……君の話、聞かせてよ。いつも聞いてもらってばっかりだし」',
@@ -5001,7 +5001,7 @@ const CUSTOMERS = {
   onzoshi: {
     id: 'onzoshi',
     name: '御曹司・カネマル',
-    tier: 'vip',  fromDay: 28,
+    tier: 'vip',  fromDay: 20,
     tierCap: 'donperi',
     topicAffinity: 'manga',
     intro: '20代後半・親の会社の"専務"。札束の匂いと、背伸びの匂い。',
@@ -7048,7 +7048,7 @@ const CUSTOMERS = {
   geino: {
     id: 'geino',
     name: '芸能事務所社長・ワシオ',
-    tier: 'vip',  fromDay: 35,
+    tier: 'vip',  fromDay: 26,
     tierCap: 'donperi',
     topicAffinity: 'eiga',
     intro: '40代・中堅芸能事務所の社長。機嫌の天気は変わりやすく、当たれば豪快に晴れる。',
@@ -7693,7 +7693,7 @@ const CUSTOMERS = {
 
       // ---------- 場内：期限を決めている人 ----------
       {
-        jonaiMeta: { id: 'geino_j_kigen' },
+        jonaiMeta: { id: 'geino_j_kigen', gives: ['geino_yakusoku'] },   // 出口の約束＝エンディングで回収する
         jonai: [
           {
             line: '「ねえ。……きみさ、この仕事、いつまでやるつもり？」',

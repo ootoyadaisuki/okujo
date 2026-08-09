@@ -1282,9 +1282,18 @@ G.afterTopic = function(){
 function enterJonai(m){
   const cs = custState(m);
   let u = pickUnit(m.cust, 'jonai', cs, m.firstUnit.id);
-  if (!u) {   // once を配り切った保険：条件を満たす無印のものを頭から、それも無ければ先頭
+  if (!u) {   // once を配り切った保険：needs を満たす無印のものを頭から
     const all = unitsOf(m.cust, 'jonai');
-    u = all.find(x => !x.bindFirst && x.needs.every(f => cs.flags.includes(f))) || all[0];
+    u = all.find(x => !x.bindFirst && x.needs.every(f => cs.flags.includes(f))) || null;
+  }
+  if (!u) {
+    // 条件を満たす場内の話が一本も無い。
+    // ここで先頭を強行採用すると「まだ聞いていない話を前提に喋る」事故になる
+    //（unitsOf のコメントが防ぐと宣言している当の事故）。話が無いなら、卓を締める。
+    settleDrinks(m);
+    State.night.chenjiCount = (State.night.chenjiCount || 0) + 1;
+    m.phase = 'chenji';
+    return;
   }
   m.jonaiUnit = u;
   cs.jonaiCount = (cs.jonaiCount || 0) + 1;
@@ -2990,8 +2999,21 @@ function renderNightResult(){
     <button class="btn btn-primary" onclick="G.toNextDay()">眠る</button>`;
 }
 
+// 勝ちエンドは、100日で誰と何を約束したかで中身が変わる。
+// 以前は固定の1本で、通帳の数字だけで始まって終わり、客が一人も出てこなかった。
+// 100日ぶん客の話を聞いておいて、最後に誰にも会わずに終わるのはおかしい。
+function winEndingText(){
+  const e = DATA.ending;
+  const has = (cust, flag) => ((State.cust[cust] || {}).flags || []).includes(flag);
+  const parts = [e.win];
+  if (has('ishi', 'ishi_yakusoku'))  parts.push(e.winIshi);
+  if (has('geino', 'geino_yakusoku')) parts.push(e.winGeino);
+  parts.push(e.winTour);
+  return parts.join('\n\n');
+}
+
 function renderEnding(){
-  const text = State.win ? DATA.ending.win
+  const text = State.win ? winEndingText()
     : State.loseReason === 'fired' ? DATA.ending.fired
     : State.loseReason === 'ryunen' ? DATA.ending.ryunen
     : DATA.ending.lose;
