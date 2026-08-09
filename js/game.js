@@ -2030,7 +2030,14 @@ function currentBgmZone(){
   return 'daily';
 }
 
+// 描画の入口。中身を描いたあと、1画面に収まっているかを Fit に確かめさせる。
+// （自動プレイのハーネスには fit.js を読ませていないので、typeof で逃がしてある）
 function render(){
+  renderScreen();
+  if (typeof Fit !== 'undefined') Fit.schedule();
+}
+
+function renderScreen(){
   AudioCtl.setZone(currentBgmZone());
   renderStatus();
   const S = State.screen;

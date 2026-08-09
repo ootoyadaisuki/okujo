@@ -2,9 +2,15 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <!-- ホーム画面から起動したときフルスクリーンにする。あわせて上の viewport-fit=cover と
+       CSS の env(safe-area-inset-*) で、ノッチとホームバーの下に文字が潜らないようにしている -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#140a1e">
   <title>億女を目指せ！</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=4.0">
 </head>
 <body>
   <div id="app">
@@ -13,10 +19,11 @@
   </div>
   <!-- ?v= はキャッシュ避け。js を書き換えたらこの数字を上げること。
        上げ忘れると、更新したのに古いセリフ・古い音のまま遊ばれる（実際に一度やった） -->
-  <script src="js/config.js?v=3.2"></script>
-  <script src="js/data.js?v=3.2"></script>
-  <script src="js/customers.js?v=3.2"></script>
-  <script src="js/audio.js?v=3.2"></script>
-  <script src="js/game.js?v=3.2"></script>
+  <script src="js/config.js?v=4.0"></script>
+  <script src="js/data.js?v=4.0"></script>
+  <script src="js/customers.js?v=4.0"></script>
+  <script src="js/audio.js?v=4.0"></script>
+  <script src="js/fit.js?v=4.0"></script>
+  <script src="js/game.js?v=4.0"></script>
 </body>
 </html>
