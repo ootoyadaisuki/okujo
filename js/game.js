@@ -551,8 +551,7 @@ G.endSick = function(){
   addTrust(CONFIG.trust.sick);
   for (let i = 0; i < CONFIG.stamina.sickDays; i++) {
     if (State.day >= CONFIG.totalDays) {
-      State.win = State.money >= CONFIG.goalMoney;
-      State.screen = 'ending';
+      settleEnding(State.money >= CONFIG.goalMoney);
       render();
       return;
     }
@@ -599,7 +598,9 @@ function inTutorial(){ return State.day <= CONFIG.tutorial.helpDays; }
 // ---- 会話ユニットの選択（フラグ層）------------------------------------
 // episodes[] の first / jonai は、それぞれ独立した「会話ユニット」として扱う。
 //   needs: このユニットを出す前に、客が知っていなければならない話の種
-//   gives: このユニットを演じ切ると立つ種
+//   gives: このユニットを演じ切ると立つ種（卓に入った時点で立つ。話の前提を配るためのもの）
+//          ※「その一言を選んだから立つ」種は、ここではなく choices[].gives に書くこと。
+//            出口の約束のように、選ばなかった人にまで立つと嘘になるものが該当する
 //   once : 一度きり（初対面の探りなど、二度と再生してはいけないもの）
 //   bindFirst: その夜の探りユニットと対になっているとき、相手の id を書く（例：企画書を見せた夜の場内）
 // これで「まだ聞いていない話を前提に喋る」事故と、
@@ -1128,6 +1129,11 @@ G.pickChoice = function(orderIdx){
   // 指名卓でも売掛を通してしまうことがある（"投資家"ヨコタのツケ）
   if (ch.flag === 'tobi') State.tobiDay = State.day + CONFIG.tobi.delayDays;
 
+  // その一言を選んだからこそ立つ種（出口の約束など）。
+  // ユニット側の gives と違い、卓に入っただけでは立たない。
+  // ここを分けないと、全部凡打で流した人がエンディングで「約束したので」と言い出す。
+  if (ch.gives) ch.gives.forEach(f => { const cs = custState(m); if (!cs.flags.includes(f)) cs.flags.push(f); });
+
   const dAff = capAffUp(m, affGain(ch.type, rallyNo(m)));
   const dMental = mentalCost(ch.type);
   custState(m).affection = clampAff(custState(m).affection + dAff);
@@ -1646,6 +1652,17 @@ function ryunenUnsettled(){
   return State.uniAttended < CONFIG.uni.need && !State.uniWarned.ryunen;
 }
 
+// エンディングへ入る唯一の入口。3箇所でバラバラに screen を書き換えていたせいで、
+// 敗因を名乗る処理が抜けていた（loseReason に 'ryunen' を入れるコードが
+// どこにも無く、留年エンドの本文と専用絵が一度も表示されていなかった）。
+// 留年＝学費100万を背負った失敗は、卓の一言より重い。名乗らせないと、
+// 大学を落として負けた人が「あの夜、あの卓で」と卓のせいにして終わる。
+function settleEnding(win){
+  State.win = win;
+  if (!win && !State.loseReason && State.uniWarned.ryunen) State.loseReason = 'ryunen';
+  State.screen = 'ending';
+}
+
 // skipResult: 店に出ていない日（VIPの頼まれごとなど）は「閉店」の集計画面を出さずに翌朝へ送る
 function endDay(earned, skipResult){
   State.money += earned;
@@ -1655,8 +1672,8 @@ function endDay(earned, skipResult){
   State.workedToday = false;
 
   // 早期クリアは留年が回避可能なときだけ（3月に留年が確定する人間に勝ち逃げはない）
-  if (State.money >= CONFIG.goalMoney && !ryunenUnsettled()) { State.screen = 'ending'; State.win = true; render(); return; }
-  if (State.day >= CONFIG.totalDays)   { State.screen = 'ending'; State.win = false; render(); return; }
+  if (State.money >= CONFIG.goalMoney && !ryunenUnsettled()) { settleEnding(true); render(); return; }
+  if (State.day >= CONFIG.totalDays)   { settleEnding(false); render(); return; }
   State.day++;
   if (skipResult) { G.toNextDay(); return; }
   State.screen = 'nightResult';
@@ -1897,8 +1914,8 @@ G.endHoliday = function(){
   State.holidayPicked = null;
   State.workedYesterday = false;   // 店休日。夜の話は起きていない
   State.workedToday = false;
-  if (State.money >= CONFIG.goalMoney && !ryunenUnsettled()) { State.win = true; State.screen = 'ending'; render(); return; }
-  if (State.day >= CONFIG.totalDays) { State.win = State.money >= CONFIG.goalMoney; State.screen = 'ending'; render(); return; }
+  if (State.money >= CONFIG.goalMoney && !ryunenUnsettled()) { settleEnding(true); render(); return; }
+  if (State.day >= CONFIG.totalDays) { settleEnding(State.money >= CONFIG.goalMoney); render(); return; }
   State.day++;
   State.stamina = clampStamina(State.stamina + morningStamina());
   State.mental = clampMental(State.mental + CONFIG.stamina.mentalMorning);
@@ -3033,7 +3050,7 @@ function renderEnding(){
     : '🌧 GAME OVER';
   // エンディングごとに背景を出し分ける（クリア＝ライブ会場のご褒美絵、敗北も理由ごとに専用絵）
   const endingImg = State.win ? 'ending_clear'
-    : State.loseReason === 'fired' ? 'scene_mensetsu'
+    : State.loseReason === 'fired' ? 'scene_fired'   // 空のロッカー。scene_mensetsu は初出勤と呼び出しで既に2回出ている
     : State.loseReason === 'ryunen' ? 'scene_ryunen'
     : 'ending_lose';
   const visual = `<div class="scene-visual"><img src="images/${endingImg}.webp" alt="" onerror="this.parentElement.style.display='none'"></div>`;
