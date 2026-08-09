@@ -225,7 +225,6 @@ G.newGame = function(){
     workedToday: false, workedYesterday: true,   // 朝のイベントの出し分け（昨夜、店に出たか）
     nagashiStreak: 0, lastNagashiDay: -9,        // 流しの連投を店長が見ている
     seikeiCount: 0, busuSeen: false, seikeiNight: -99,  // 12/27の初ダメ出し判定／整形した営業日
-    helpTroubleUsed: [],                         // 研修トラブルの既出（周回をまたいで残さない）
     sundayIdx: 0, sunday: null,                  // 日曜（店休）の街歩き
     workNo: 0, mobImgLog: {},                    // 営業日の通し番号／モブ画像を最後に出した営業日
     lastWarukuchi: -99,                          // 同僚の陰口を最後に聞いた日
@@ -911,22 +910,9 @@ function nextTable(){
       n.current.insult = DATA.busuLines[Math.floor(rnd() * DATA.busuLines.length)];
       State.mental = clampMental(State.mental + bs.mental);
     }
-    // 研修期間のトラブル（先輩の卓で、新人がやらかす／巻き込まれる）
-    if (inTutorial() && !n.helpTroubleDone && rnd() < CONFIG.helpTrouble.chance) {
-      n.helpTroubleDone = true;
-      // 研修は2夜・1夜1本なので、固定連番だと5本のうち先頭2本しか一生出なかった
-      // （実測40周：①40回 ②33回 ③④⑤ 0回）。まだ出していない中から引く
-      const list = DATA.helpTroubles;
-      const used = State.helpTroubleUsed || [];
-      const pool = list.filter((_, i) => !used.includes(i));
-      const pick = Math.floor(rnd() * pool.length);
-      const tr = pool[pick];
-      State.helpTroubleUsed = used.concat(list.indexOf(tr));
-      n.current.trouble = tr;
-      if (tr.mental)  State.mental  = clampMental(State.mental + tr.mental);
-      if (tr.stamina) State.stamina = clampStamina(State.stamina + tr.stamina);
-      if (tr.trust)   addTrust(tr.trust, tr.title);
-    }
+    // 研修中のミスは出さない（作者判断）。
+    // ルールを教わっている最中に、選んでもいない失敗でメンタルを削られると、
+    // プレイヤーは何が悪かったのか分からないまま損をする。
   } else {
     const cust = CUSTOMERS[kind.split(':')[1]];
     const cs = State.cust[cust.id];
@@ -2782,27 +2768,15 @@ function renderLight(){
     const insult = cur.insult
       ? `<div class="story-box bad">${para(cur.insult)}</div>
          <div class="note-box"><p>・メンタル ${CONFIG.busu.mental}</p><p>・（……容姿を磨けば、こういう夜は減っていく）</p></div>` : '';
-    // 研修期間のトラブル（ヘルプの新人が踏む地雷）
-    const tr = cur.trouble;
-    const trouble = tr
-      ? `<div class="story-box bad">${para(tr.text)}</div>
-         <div class="note-box">${[
-            tr.mental  ? `・メンタル ${tr.mental}` : '',
-            tr.stamina ? `・体力 ${tr.stamina}` : '',
-            tr.trust   ? `・店長の信頼 ${tr.trust}` : '',
-            tr.lesson  ? `・${esc(tr.lesson)}` : '',
-          ].filter(Boolean).map(t => `<p>${t}</p>`).join('')}</div>` : '';
     // 話題の種が、フリーの卓で芽吹いた
     const topic = cur.topicId
       ? `<div class="story-box ok">${para(DATA.topicEvents[cur.topicId])}</div>
          <div class="note-box"><p>・話題の種「${esc(DATA.topicNames[cur.topicId])}」が刺さった！　好感度 +${CONFIG.topic.affection}</p><p>・（この種は使い切った。また仕込める）</p></div>` : '';
-    const btn = cur.insult ? '……笑顔で、接客スタート'
-      : tr ? '……気を取り直して、接客スタート'
-      : '接客スタート';
+    const btn = cur.insult ? '……笑顔で、接客スタート' : '接客スタート';
     $screen().innerHTML = `${nightHeader(title, stageBadge(cur), affMeter)}${notice}${helpNote}
       ${mobImg}
       <div class="story-box">${para(cur.table.desc)}</div>
-      ${trouble}${topic}${insult}
+      ${topic}${insult}
       <button class="btn btn-primary" onclick="G.startLightTalk()">${btn}</button>`;
     return;
   }

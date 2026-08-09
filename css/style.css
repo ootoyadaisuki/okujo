@@ -57,17 +57,9 @@ html, body {
   z-index: 20;
   box-shadow: 0 6px 24px rgba(20, 10, 30, .9), 0 0 0 12px var(--bg);
 }
-/* ボタンの上に、背景色へ溶けるぼかしを敷く。
-   これが無いと、ボタンの縁で本文がスパッと切れて「途中で切れている」ように見える */
-#screen > .btn-primary:last-child::before {
-  content: '';
-  position: absolute;
-  left: -16px; right: -16px; bottom: 100%;
-  height: 28px;
-  margin-bottom: 12px;
-  background: linear-gradient(to bottom, rgba(20, 10, 30, 0), var(--bg));
-  pointer-events: none;
-}
+/* ぼかしは置かない。以前ボタンの上に 28px のグラデーションを敷いたところ、
+   ドリンクバックなどの精算欄がその下に隠れて読めなくなった。
+   ボタン自身の 12px の縁取り（下の box-shadow）だけで十分。 */
 
 /* ---- ステータスバー ---- */
 #status-bar {
