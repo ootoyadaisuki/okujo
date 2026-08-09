@@ -649,8 +649,9 @@ function mainsQuotaOf(day){
 
 function pickMains(){
   if (inTutorial()) return { mains: [], weird: 0 };   // 上級客は回ってこない＝場内指名も発生しない
-  if (State.trust < CONFIG.trust.weirdLine2) return { mains: [], weird: 2 };
-  if (State.trust < CONFIG.trust.weirdLine)  return { mains: [], weird: 1 };
+  // 信頼を落とすと、いい卓を回してもらえない（罰としての痛客）
+  if (State.trust < CONFIG.trust.weirdLine2) return { mains: [], weird: 2, punish: true };
+  if (State.trust < CONFIG.trust.weirdLine)  return { mains: [], weird: 1, punish: true };
   let cands = Object.keys(CUSTOMERS).filter(id => custActive(id) && hasFreshTalk(id));
   // 新しい話が尽きたら、来店が古い客から再登場（再演可能なユニットだけが回る）
   if (cands.length === 0) cands = Object.keys(CUSTOMERS).filter(id =>
@@ -660,12 +661,15 @@ function pickMains(){
   let quota = mainsQuotaOf(State.day);
   const affordable = Math.max(1, Math.floor((State.stamina - CONFIG.stamina.noWorkLine) / 20));
   quota = Math.min(quota, affordable);
-  return { mains: cands.slice(0, quota), weird: 0 };
+  // 痛客は罰ではなく、夜の普通の一部。フリーの卓のひとつが、たまにそれになる
+  const wg = CONFIG.weirdGuest;
+  const weird = (State.day >= wg.fromDay && rnd() < wg.chance) ? 1 : 0;
+  return { mains: cands.slice(0, quota), weird, punish: false };
 }
 
 function startNight(){
   State.workNo = (State.workNo || 0) + 1;   // 営業日の通し番号（モブ画像の寝かせに使う）
-  const { mains, weird } = pickMains();
+  const { mains, weird, punish } = pickMains();
   const plan = [];
   for (let i = 0; i < weird; i++) plan.push('weird');
   // 指名が増えた夜でもフリーの卓は最低1つ残す（＝夜が指名だけで埋まらない）
@@ -686,6 +690,7 @@ function startNight(){
     earned: CONFIG.pay.dayWage - CONFIG.pay.hairSet,
     breakdown: [`日給保証 ${yen(CONFIG.pay.dayWage)}`, `ヘアセット代 -${yen(CONFIG.pay.hairSet)}`],
     weirdNoticeShown: false,
+    weirdPunish: !!punish,   // 罰として回された痛客か、ただの今夜の客か（掴みの文が変わる）
     trustNotes: [],
     current: null,
     drinkMult: nev ? nev.drinkMult : 1,
@@ -2637,9 +2642,12 @@ function nightHeader(title, badge, aff){
 function renderLight(){
   const cur = State.night.current;
   const t = cur.table;
+  const punished = !!(State.night && State.night.weirdPunish);
   const who = t.job ? `${esc(t.job)}・${esc(t.name)}` : (cur.weird ? '回された卓' : 'フリーの一見さん');
   const title = `${cur.weird ? '🌀' : '🥂'} ${who}`;
-  const notice = cur.notice ? `<p class="warn">${esc(DATA.weirdNotice)}</p>` : '';
+  // 罰として回された夜と、ただ今夜その人が来ただけの夜とでは、卓に着く気分が違う
+  const notice = cur.notice
+    ? `<p class="warn">${esc(punished ? DATA.weirdNotice : DATA.weirdNoticeNormal)}</p>` : '';
   const helpNote = inTutorial() ? `<p class="help-note">${esc(DATA.helpNotice)}</p>` : '';
   const affMeter = `<span class="cust-aff">好感度 ${bar(cur.mobAff, 100, 'bar-aff')}</span>`;
   const r = cur.table.rallies[cur.rally];
