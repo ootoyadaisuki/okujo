@@ -252,6 +252,15 @@ function clampMental(v){ return Math.max(0, Math.min(CONFIG.mentalMax, v)); }
 function clampStamina(v){ return Math.max(0, Math.min(State.staminaMax, v)); }
 function clampAff(v){ return Math.max(0, Math.min(100, v)); }
 
+// 朝の自然回復。体力上限に比例させる。
+// 定額（+15）だと体力上限を上げても一円も返ってこず、筋トレの「上限ガチャ」に
+// 買う理由が無かった（実測で筋トレは無投資に11日負けていた）。
+// 上限100なら今までどおり+15。上げたぶんだけ、毎朝の戻りが増える。
+function morningStamina(){
+  const s = CONFIG.stamina;
+  return Math.max(s.morning, Math.round((State.staminaMax || s.max) * s.morningRate));
+}
+
 function addTrust(v, label){
   State.trust = Math.max(0, Math.min(CONFIG.trust.max, State.trust + v));
   if (State.night && label) State.night.trustNotes.push(`${label} ${v > 0 ? '+' + v : v}`);
@@ -1640,7 +1649,7 @@ function endDay(earned, skipResult){
 
 G.toNextDay = function(){
   // 朝の自然回復（寝れば少しは戻る）
-  State.stamina = clampStamina(State.stamina + CONFIG.stamina.morning);
+  State.stamina = clampStamina(State.stamina + morningStamina());
   State.mental = clampMental(State.mental + CONFIG.stamina.mentalMorning);
   State.night = null;
   // 初日の閉店後だけ、レイナのねぎらい＋昼パートの説明を挟む（endDayで日付は+1済み＝いまDay2）
@@ -1875,7 +1884,7 @@ G.endHoliday = function(){
   if (State.money >= CONFIG.goalMoney && !ryunenUnsettled()) { State.win = true; State.screen = 'ending'; render(); return; }
   if (State.day >= CONFIG.totalDays) { State.win = State.money >= CONFIG.goalMoney; State.screen = 'ending'; render(); return; }
   State.day++;
-  State.stamina = clampStamina(State.stamina + CONFIG.stamina.morning);
+  State.stamina = clampStamina(State.stamina + morningStamina());
   State.mental = clampMental(State.mental + CONFIG.stamina.mentalMorning);
   enterDay();
 };
