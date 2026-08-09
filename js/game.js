@@ -761,6 +761,9 @@ function startNight(){
     State.night.chikokuText = DATA.chikokuScenes[Math.floor(rnd() * DATA.chikokuScenes.length)];
     addTrust(CONFIG.trust.chikoku, '遅刻');
   }
+  // 初日だけは出勤画面を挟まない。冒頭の「──推しに、会いに行く」から、そのままフロアへ落とす
+  // （支度の説明は、このあとレイナの研修が全部やってくれる）
+  if (State.day === 1) { G.enterFloor(); return; }
   // 卓に着く前に、まず「出勤」の一枚。今夜の店の顔ぶれを、支度をしながら受け取る
   State.screen = 'shukkin';
   render();
@@ -2566,9 +2569,7 @@ function renderSoutai(){
 function renderShukkin(){
   const n = State.night;
   const notes = [];
-  if (inTutorial()) notes.push(State.day === 1
-    ? '今夜は先輩のヘルプ。卓の空気を、まず覚える'
-    : '今夜も先輩のヘルプ。卓の空気を、まず覚える');
+  if (inTutorial()) notes.push('今夜も先輩のヘルプ。卓の空気を、まず覚える');
   else if (n.mainCount === 0) notes.push('指名の予定は入っていない。今夜はフリーで勝負');
   else if (n.mainCount === 1) notes.push('指名がひとつ、ボードに入っている');
   else notes.push(`指名が${n.mainCount}件。……ボードを二度見した`);
@@ -2581,7 +2582,7 @@ function renderShukkin(){
   if (n.eventLabel) notes.push(`${n.eventLabel}──今夜はドリンクバック×${n.drinkMult}`);
   const story = n.mainCount >= 3 ? DATA.shukkinScenes.rush
     : n.mainCount === 2 ? DATA.shukkinScenes.busy
-    : inTutorial() ? (State.day === 1 ? DATA.shukkinScenes.help1 : DATA.shukkinScenes.help)
+    : inTutorial() ? DATA.shukkinScenes.help   // Day2のみ（Day1は出勤画面を挟まない）
     : DATA.shukkinScenes.normal;
   // 遅刻した夜は、支度の話より遅刻の話が先に来る
   const chikokuBox = n.chikoku
