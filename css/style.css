@@ -47,7 +47,11 @@ html, body {
    （sticky なので、下まで来たら普通に本文の直後へ落ち着く）
    選択肢は貼り付けない。4つあるうえ、どれを選ぶかは本文を読んでから決めるもの。
 --------------------------------------------------------------------- */
-#screen > .btn:last-child {
+/* 貼り付けるのは「最後のボタン」ではなく「最後に置かれた主ボタン」。
+   朝の画面は 出勤(主) → 流し(副) → 休む(副) の順なので、
+   :last-child だと「今日は出勤しない」が貼り付いてしまう。
+   副ボタンが続く画面では貼り付けない（貼り付いた主ボタンが副を覆い隠すため） */
+#screen > .btn-primary:last-child {
   position: sticky;
   bottom: calc(var(--safe-b) + 12px);
   z-index: 20;
@@ -55,7 +59,7 @@ html, body {
 }
 /* ボタンの上に、背景色へ溶けるぼかしを敷く。
    これが無いと、ボタンの縁で本文がスパッと切れて「途中で切れている」ように見える */
-#screen > .btn:last-child::before {
+#screen > .btn-primary:last-child::before {
   content: '';
   position: absolute;
   left: -16px; right: -16px; bottom: 100%;
@@ -135,17 +139,18 @@ h2 { font-size: 18px; margin: 16px 0 8px; }
   display: flex; align-items: center; flex-wrap: wrap;
   gap: 6px 12px; margin: 16px 0 6px;
 }
-/* 客の名前。指名客の見出し「🥂 3卓目 — 商店街の会長・ダイコク」は 18px で 304px 要り、
-   iPhone SE（320px幅）で使える 288px に入らない。広い画面は 18px のまま、
-   狭い画面だけ落とす。折り返さないよう nowrap を併用する */
+/* 客の名前。下限は iPhone 13 mini（375px幅・使える幅343px）に合わせてある。
+   320px の初代SEは対象外（作者判断）。そこでは長い名前が2種だけ折り返すが、
+   そのために全端末の文字を14pxまで落とすほうが損だと判断した。 */
 .cust-head .cust-name {
-  font-size: clamp(14px, 4.4vw, 18px);
+  font-size: clamp(16px, 4.4vw, 18px);
   font-weight: bold;
   white-space: nowrap;
 }
-/* モブ客の職業説明。最長17字あり、名前と同寸だと絶対に1行に入らないので一段小さく */
+/* モブ客の職業説明（最長17字）。名前と同寸だと1行に入らないので一段小さく。
+   カタカナの名前は大きいままなので、誰の卓かはひと目で分かる */
 .cust-head .cust-name .cust-job {
-  font-size: clamp(10px, 3.1vw, 13px);
+  font-size: clamp(12px, 3.1vw, 13px);
   font-weight: normal;
   color: var(--dim);
 }
