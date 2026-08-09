@@ -736,6 +736,10 @@ function startNight(){
     eventLabel: nev ? nev.label : null,
     eventShown: false,
     mainCount: mains.length,
+    // ボードに名前が載るのは本指名だけ。初来店の客は「指名卓」の枠には入るが、
+    // 卓に着けばバッジは「フリー」。ここを分けないと、フリーデビューの夜に
+    // 「指名がひとつ、ボードに入っている」と言ってしまう
+    honshimeiCount: mains.filter(id => (State.cust[id].visits || 0) >= 1).length,
     extraMains,
   };
   // 昨夜のお叱りの翌日は、フリーの卓を1つ外される
@@ -2602,9 +2606,9 @@ function renderShukkin(){
   const n = State.night;
   const notes = [];
   if (inTutorial()) notes.push('今夜も先輩のヘルプ。卓の空気を、まず覚える');
-  else if (n.mainCount === 0) notes.push('指名の予定は入っていない。今夜はフリーで勝負');
-  else if (n.mainCount === 1) notes.push('指名がひとつ、ボードに入っている');
-  else notes.push(`指名が${n.mainCount}件。……ボードを二度見した`);
+  else if (!n.honshimeiCount) notes.push('本指名は入っていない。今夜はフリーで勝負');
+  else if (n.honshimeiCount === 1) notes.push('本指名がひとつ、ボードに入っている');
+  else notes.push(`本指名が${n.honshimeiCount}件。……ボードを二度見した`);
   if (n.extraMains > 0) {
     const ob = CONFIG.overbooked;
     notes.push(`卓が重なる夜は、それだけで削れる（体力 ${ob.stamina * n.extraMains}／メンタル ${ob.mental * n.extraMains}）`);
@@ -2622,8 +2626,8 @@ function renderShukkin(){
        <div class="story-box">${para(DATA.nightEventScenes[State.day] || '')}</div>`
     : n.chikoku ? `<div class="story-box bad">${para(n.chikokuText)}</div>`
     : `<div class="story-box">${para(
-        n.mainCount >= 3 ? DATA.shukkinScenes.rush
-        : n.mainCount === 2 ? DATA.shukkinScenes.busy
+        n.honshimeiCount >= 3 ? DATA.shukkinScenes.rush
+        : n.honshimeiCount === 2 ? DATA.shukkinScenes.busy
         : inTutorial() ? DATA.shukkinScenes.help   // Day2のみ（Day1は出勤画面を挟まない）
         : DATA.shukkinScenes.normal)}</div>`;
   $screen().innerHTML = `
@@ -2967,7 +2971,7 @@ function renderMain(){
   if (m.phase === 'chenji') {
     $screen().innerHTML = `${header}
       <div class="story-box bad">${para(cust.chenjiText)}</div>
-      <div class="note-box"><p>・${CONFIG.serve.firstRallies}回中 ${m.correct}回しか刺さらなかった → チェンジ</p>
+      <div class="note-box"><p>・${CONFIG.serve.firstRallies}回中 ${m.correct}回しか刺さらなかった → ${m.honshimei ? '場内はつかず、卓を離れた' : 'チェンジ'}</p>
       <p>・ドリンクバック${m.drinkInfo.drinks}杯のみ +${yen(m.drinkInfo.amount)}</p></div>
       <button class="btn btn-primary" onclick="G.endTable()">次の卓へ</button>`;
     return;
@@ -3007,10 +3011,10 @@ function renderMain(){
           ? '<p>卓は、最悪の形で終わった。……あの人は、もう来ない。</p>'
           : '<p>卓は、途中で終わった。伝票だけが残っている。<br>……それでも、あの人はまた来る。今夜のことは、たぶん覚えたまま。</p>')
       : (m.soldCount || 0) >= 2
-        ? '<p>ボトルが2本。……こんな夜が、月に何度かあればいいのに。</p>'
+        ? '<p>シャンパンが2本。……こんな夜が、月に何度かあればいいのに。</p>'
         : m.sold
-          ? '<p>ボトルの入った、いい卓だった。</p>'
-          : '<p>ボトルは入らなかった。今日はこんなもんか。</p>';
+          ? '<p>シャンパンの入った、いい卓だった。</p>'
+          : '<p>シャンパンは入らなかった。今日はこんなもんか。</p>';
     $screen().innerHTML = `${header}
       <div class="story-box">${summary}</div>
       <button class="btn btn-primary" onclick="G.endTable()">次の卓へ</button>`;
