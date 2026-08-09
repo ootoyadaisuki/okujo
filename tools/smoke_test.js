@@ -358,16 +358,32 @@ const cheapDrink = () => 0;
 
 const stdOnedari = (S, m) => aff(S, m) >= 85 || (m.turn + 1 === 5 && aff(S, m) >= 72);
 
-// 1) 最適プレイ: 全卓で正解を刺し続ける
+// 1) 最適プレイ: 全卓で正解を刺し続ける。
+//    なだめるは無料の回復手段なので、完璧な打ち手なら当然使う。
+//    ここを使わない設定にしていた頃は「全問正解なのに出禁」が 24回中2回起きていて、
+//    好感度の天井を入れてゲームが長くなったら 6回中1回まで増えた。
+//    縛りプレイの結果でテストを落としても仕方がないので、最適プレイは最適に打たせ、
+//    崩壊ルートは下の「なだめない縛り」で別に踏む。
 const bestRun = playthrough('最適プレイ　　', {
   dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
-  choose: best, onedari: stdOnedari, useNadameru: false,
+  choose: best, onedari: stdOnedari, useNadameru: true,
 });
 if (bestRun.bans.length) throw new Error('最適プレイで出禁が出た');
 if (bestRun.log.jonai === 0) throw new Error('最適プレイで場内指名が一度も付かなかった');
 if (bestRun.log.sales === 0) throw new Error('最適プレイでボトルが1本も入らなかった');
 if (bestRun.fired) throw new Error('最適プレイでクビになった');
 if (bestRun.State.loseReason === 'ryunen') throw new Error('大学に通ったのに留年した');
+
+// 1.2) なだめない縛り: 正解は刺すが、心が折れても回復しない。
+//      brokenLine を踏んで選択肢が壊れ、爆発・出禁まで行くルートを毎回踏ませる。
+//      ここは出禁が出てよい（出ないほうがおかしい）。クラッシュしないことだけを見る。
+const noNadame = playthrough('なだめない縛り', {
+  dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
+  choose: best, onedari: stdOnedari, useNadameru: false,
+});
+if (noNadame.log.explosions === 0 && noNadame.bans.length === 0) {
+  console.log('  ⚠ なだめない縛りで一度も爆発しなかった（メンタル崩壊ルートが踏まれていない）');
+}
 
 // 1.5) 大学サボりプレイ（中級の腕）: 警告2回→3/1に留年確定・学費-100万を背負って続行→届かないはず
 const saboru = playthrough('大学サボり　　', {

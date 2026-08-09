@@ -1013,6 +1013,17 @@ function affGain(type, rally){
   return v;
 }
 
+// 1卓で上がる好感度に天井をかける（下げる方向には効かせない）。
+// 天井が無かった頃は、初回来店の8ラリーで 30→86 まで届き、
+// ボトルの階級ゲート 60/75/90 が初日で開いていた＝好感度が関門として機能していなかった。
+function capAffUp(m, d){
+  if (d <= 0) return d;
+  m.affUp = m.affUp || 0;
+  const use = Math.min(d, Math.max(0, CONFIG.serve.maxGainPerTable - m.affUp));
+  m.affUp += use;
+  return use;
+}
+
 function mentalCost(type){
   const s = CONFIG.serve;
   const base = { seikai: s.mentalSeikai, bonda: s.mentalBonda, hazure: s.mentalHazure, jirai: s.mentalJirai }[type];
@@ -1042,7 +1053,7 @@ G.pickChoice = function(orderIdx){
   }
   AudioCtl.playSe(ch.type);   // seikai=チン / bonda=ボッ / hazure=ボ、ト / jirai=ズッ
 
-  const dAff = affGain(ch.type, rallyNo(m));
+  const dAff = capAffUp(m, affGain(ch.type, rallyNo(m)));
   const dMental = mentalCost(ch.type);
   custState(m).affection = clampAff(custState(m).affection + dAff);
   State.mental = clampMental(State.mental + dMental);
