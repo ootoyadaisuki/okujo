@@ -560,11 +560,114 @@ for (let i = 0; i < 12; i++) playthrough(`到達計測${i}`, {
   console.log(`[組合せの重複 ] ${REPEAT.tables} 卓中 ${REPEAT.dup} が既出の「探り＋場内」（重複率 ${pct}%）`);
 }
 
-// 12) 文字数テル：文字数から答えが割れてしまわないか
-//     叩き台では503卓中87%で「最長＝正解」だった＝長いのを押すだけで読まずに勝てる。
-//     ただし地雷ばかり長くすると今度は「長いのを避ける」で勝ててしまう＝テルの反転。
-//     なので特定の type が最長スロットを独占していないかを見る。どの型も40%以下が要件。
-// 全12人が決定稿。以降どの客も、最長スロットの型が40%を超えるとテストが落ちる
+// 12) テル検出：本文を読まずに、見た目の1つの特徴だけで正解が当たってしまわないか
+//
+//     叩き台では503卓中87%で「最長＝正解」だった＝長いのを押すだけで勝てた。
+//     それを潰したあと、同じ理由で「……を含む＝正解64%」「……で始まる＝正解100%」が生き残っていた。
+//     最長スロットだけを見ていたから素通りしたので、テルの種類を決め打ちするのをやめる。
+//
+//     考え方：プレイヤーが使える「1変数ルール」を機械的に並べ、それぞれの的中率を測る。
+//     4択なので当てずっぽうは25%。どのルールでも45%を超えたら、そのルールは攻略として成立する＝不合格。
+//     地雷側も見る。地雷を高精度で指すルールは「それを避ける」攻略になるため同じく不合格。
+//     ルールが発火する卓が全体の5%未満なら、攻略として使うには稀すぎるので測らない。
+const FAILURES = [];      // テルの不合格はここに溜めて、全テストを走らせきってから最後に投げる
+const TELL_MAX = 45;      // 1つのルールが指した先で、どの型も この% 以下であること
+const TELL_MINCOV = 5;    // 発火率が この% 未満のルールは母数不足として除外
+
+// 選択肢は全文が「」で括られている。「で始まる／で終わる」を測るために、その外枠だけ外す
+const core = t => t.replace(/^[「（]/, '').replace(/[」）]$/, '');
+
+// 選択肢1本を見て真偽を返すもの（その卓でただ1本だけ真なら、ルールが発火する）
+const FLAGS = [
+  ['「……」を含む',      t => t.includes('……')],
+  ['「……」で始まる',    t => core(t).startsWith('……')],
+  ['「……」で終わる',    t => /……$/.test(core(t))],
+  ['「！」を含む',        t => t.includes('！')],
+  ['「？」を含む',        t => t.includes('？')],
+  ['「ですか？」で終わる', t => /ですか？$/.test(core(t))],
+  ['読点が2つ以上（複文）', t => (t.match(/、/g) || []).length >= 2],
+  ['読点がない（単文）',  t => !t.includes('、')],
+  ['「私」を含む',        t => t.includes('私')],
+  ['中に引用符がある',    t => core(t).includes('「') || core(t).includes('"')],
+  ['数字を含む',          t => /[0-9０-９一二三四五六七八九十百千万]/.test(t)],
+  ['逆接で始まる',        t => /^(でも|だって|けど|いや|えっ)/.test(core(t))],
+  ['「ね」で終わる',      t => /ね[〜ー]?[。！？…]*$/.test(core(t))],
+  ['問いかけで終わる',    t => /[？?][」）]?$/.test(t)],
+  ['敬語でない（タメ口）', t => !/(です|ます|ません|でした|ましょ)/.test(t)],
+];
+// 卓の中で最大／最小のものを指すもの（同点なら発火しない）
+const RANKS = [
+  ['最長',            t => t.length,                     +1],
+  ['最短',            t => t.length,                     -1],
+  ['読点がいちばん多い', t => (t.match(/、/g) || []).length, +1],
+  ['「…」がいちばん多い', t => (t.match(/…/g) || []).length,  +1],
+];
+
+{
+  const CUST = vm.runInContext('CUSTOMERS', makeContext());
+  const TABLES = [];
+  for (const id of Object.keys(CUST)) {
+    for (const ep of CUST[id].episodes || []) {
+      for (const kind of ['first', 'jonai']) {
+        for (const u of ep[kind] || []) {
+          if ((u.choices || []).length >= 2) TABLES.push(u.choices);
+        }
+      }
+    }
+  }
+
+  // ルールが指した1本の型を数える。指せなかった卓（該当0本・同点複数）は発火せず母数に入らない
+  function measure(pick) {
+    const c = { seikai: 0, bonda: 0, hazure: 0, jirai: 0 };
+    let fired = 0;
+    for (const chs of TABLES) {
+      const hit = pick(chs);
+      if (!hit) continue;
+      fired++;
+      if (c[hit.type] !== undefined) c[hit.type]++;
+    }
+    return { c, fired };
+  }
+  const RULES = [
+    ...FLAGS.map(([name, fn]) => [name, chs => {
+      const hit = chs.filter(ch => fn(ch.text));
+      return hit.length === 1 ? hit[0] : null;
+    }]),
+    ...RANKS.map(([name, score, dir]) => [name, chs => {
+      const vals = chs.map(ch => score(ch.text) * dir);
+      const best = Math.max(...vals);
+      const hit = chs.filter((_, i) => vals[i] === best);
+      return hit.length === 1 ? hit[0] : null;
+    }]),
+  ];
+
+  const rows = [];
+  for (const [name, pick] of RULES) {
+    const { c, fired } = measure(pick);
+    const cov = fired / TABLES.length * 100;
+    const worst = ['seikai', 'jirai'].map(t => [t, c[t] / (fired || 1) * 100])
+      .sort((a, b) => b[1] - a[1])[0];
+    rows.push({ name, cov, fired, c, worstType: worst[0], worstPct: worst[1] });
+  }
+  rows.sort((a, b) => (b.cov >= TELL_MINCOV ? b.worstPct : -1) - (a.cov >= TELL_MINCOV ? a.worstPct : -1));
+
+  console.log(`\n[テル検出] 全${TABLES.length}卓。1変数ルールの的中率（当てずっぽう=25%／${TELL_MAX}%超で不合格）`);
+  const tells = [];
+  for (const r of rows) {
+    const thin = r.cov < TELL_MINCOV;
+    const bad = !thin && r.worstPct > TELL_MAX;
+    const dist = ['seikai', 'bonda', 'hazure', 'jirai']
+      .map(t => `${t.slice(0, 4)} ${String(Math.round(r.c[t] / (r.fired || 1) * 100)).padStart(3)}%`).join(' ');
+    console.log(`  ${bad ? '❌' : thin ? '－' : '✅'} ${r.name.padEnd(22)} 発火${String(Math.round(r.cov)).padStart(3)}%  ${dist}`);
+    if (bad) tells.push(`「${r.name}」→${r.worstType} ${r.worstPct.toFixed(0)}%（発火${r.cov.toFixed(0)}%）`);
+  }
+  // ここで即 throw すると後ろのテストが走らなくなるので、判定は最後にまとめて出す
+  if (tells.length) FAILURES.push(
+    `本文を読まずに勝てるテルが残っている:\n    ${tells.join('\n    ')}`
+    + `\n  → その特徴を、正解だけでなく他の型にも同じくらい配ること。`);
+}
+
+// 12b) 客ごとの偏り：全体で散っていても、特定の客だけ「最長＝正解」だと、その客の卓で読まれる
 const REWRITTEN = ['ishi', 'goinkyo', 'kacho', 'shacho', 'shitencho', 'geinin',
   'zeirishi', 'yakyu', 'kaicho', 'sekiyu', 'onzoshi', 'geino'];   // ← 全エピソードを決定稿にした客を足していく
 {
@@ -610,4 +713,5 @@ const REWRITTEN = ['ishi', 'goinkyo', 'kacho', 'shacho', 'shitencho', 'geinin',
 }
 console.log(`\n中級プレイ: 勝率${midWins}/5・クリア日 [${midDays}]（目標帯: Day65〜95）`);
 console.log(`最適プレイのクリア日: Day${bestRun.State.day}（スピードラン枠）`);
+if (FAILURES.length) throw new Error('\n\n■ ' + FAILURES.join('\n\n■ ') + '\n');
 console.log('✅ 全テスト通過');

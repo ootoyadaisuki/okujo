@@ -1719,6 +1719,7 @@ function pendingMission(){
 G.missionAccept = function(){
   const cs = State.cust[State.mission.custId];
   cs.missionIdx = (cs.missionIdx || 0) + 1;
+  cs.missionDeclines = 0;
   State.lastMission = State.day;
   State.missionPhase = 'scene';
   render();
@@ -1726,7 +1727,13 @@ G.missionAccept = function(){
 
 G.missionDecline = function(){
   const cs = State.cust[State.mission.custId];
-  cs.missionIdx = (cs.missionIdx || 0) + 1;
+  // 断っても、その頼みごとは消えない。日を置いて、同じことをもう一度頼まれる。
+  // （消していた頃は「断る＝話を1本飛ばして、営業日も失わずに先へ進む」が最適手になっていた）
+  cs.missionDeclines = (cs.missionDeclines || 0) + 1;
+  if (cs.missionDeclines >= CONFIG.mission.dropAfter) {
+    cs.missionIdx = (cs.missionIdx || 0) + 1;   // 二度断られたら、この人はもう頼んでこない
+    cs.missionDeclines = 0;
+  }
   State.lastMission = State.day;
   cs.affection = clampAff(cs.affection + CONFIG.mission.declineAff);
   State.missionPhase = 'declined';
