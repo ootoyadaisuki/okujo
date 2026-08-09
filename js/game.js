@@ -2761,7 +2761,11 @@ function renderLight(){
   const cur = State.night.current;
   const t = cur.table;
   const punished = !!(State.night && State.night.weirdPunish);
-  const who = t.job ? `${esc(t.job)}・${esc(t.name)}` : (cur.weird ? '回された卓' : 'フリーの一見さん');
+  // 職業の説明は長い（最長「資格試験に落ちたばかりの経理見習い」17字）。
+  // 名前と同じ大きさで並べると iPhone SE で折り返すので、説明側だけ小さく出す
+  const who = t.job
+    ? `<span class="cust-job">${esc(t.job)}・</span>${esc(t.name)}`
+    : (cur.weird ? '回された卓' : 'フリーの一見さん');
   const title = `${cur.weird ? '🌀' : '🥂'} ${who}`;
   // 罰として回された夜と、ただ今夜その人が来ただけの夜とでは、卓に着く気分が違う
   const notice = cur.notice

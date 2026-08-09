@@ -135,7 +135,20 @@ h2 { font-size: 18px; margin: 16px 0 8px; }
   display: flex; align-items: center; flex-wrap: wrap;
   gap: 6px 12px; margin: 16px 0 6px;
 }
-.cust-head .cust-name { font-size: 18px; font-weight: bold; }
+/* 客の名前。指名客の見出し「🥂 3卓目 — 商店街の会長・ダイコク」は 18px で 304px 要り、
+   iPhone SE（320px幅）で使える 288px に入らない。広い画面は 18px のまま、
+   狭い画面だけ落とす。折り返さないよう nowrap を併用する */
+.cust-head .cust-name {
+  font-size: clamp(14px, 4.4vw, 18px);
+  font-weight: bold;
+  white-space: nowrap;
+}
+/* モブ客の職業説明。最長17字あり、名前と同寸だと絶対に1行に入らないので一段小さく */
+.cust-head .cust-name .cust-job {
+  font-size: clamp(10px, 3.1vw, 13px);
+  font-weight: normal;
+  color: var(--dim);
+}
 .cust-head .cust-aff {
   display: inline-flex; align-items: center; gap: 5px;
   color: var(--dim); font-size: 13px;
