@@ -1321,15 +1321,18 @@ function mixWeights(day){
 }
 
 // 提示する4本を組む。
-//   ・通る階級から最低1本（アンパイ）
-//   ・その1つ上から最低1本（届きそうで届かないかもしれない誘惑）
-//   ・残りは日付重みでランダム。後半ほど上の階級が増える
+//
+// ここは以前「通る階級から1本（アンパイ）＋その1つ上から1本（誘惑）」を必ず入れていた。
+// つまり提示の上限が必ず accIdx+1 になるので、**提示された値段を眺めるだけで内部状態が読めた**。
+// 「上から2番目の階級を選ぶ」だけで成功率 891/891 = 100.00%。本文もキャラも見る必要がなかった。
+//
+// なので accIdx を提示の材料に使うのをやめた。4本は客の予算上限までの範囲から、
+// 日付重みだけで引く。通るかどうかは、出してみるまで分からない。
 function buildOffer(m){
   const n = CONFIG.serve.onedari.choices;
   const capIdx = capClassIdx(m.cust);
   let loIdx = floorClassIdx(m.cust);
-  const accIdx = acceptedClassIdx(m);
-  let topIdx = Math.min(capIdx, Math.max(accIdx + 1, loIdx));
+  let topIdx = capIdx;
   // 階級の幅が狭いと4本揃わない（ハイクラスは3銘柄しかない）。
   // まず上へ、それでも足りなければ下へ広げる。下限持ちの客でも、まず上を試すのが筋。
   const stock = () => { let c = 0; for (let i = loIdx; i <= topIdx; i++) c += drinksOf(i).length; return c; };
@@ -1348,8 +1351,6 @@ function buildOffer(m){
     return true;
   };
 
-  if (accIdx >= loIdx) takeFrom(accIdx);          // 確実に通る1本
-  if (topIdx > accIdx) takeFrom(topIdx);          // 背伸びの1本
   let guard = 0;
   while (picked.length < n && guard++ < 200) {
     let tot = 0;
@@ -1378,9 +1379,13 @@ G.onedariPick = function(idx){
   const accIdx = acceptedClassIdx(m);
   const cs = custState(m);
 
-  // 身の程を超えた1本＝断られる。どれだけうわずったかで冷え方が変わる
-  if (pick.clsIdx > accIdx) {
-    const over = pick.clsIdx - accIdx;
+  // 身の程を超えた1本＝断られる。どれだけうわずったかで冷え方が変わる。
+  // ただし「ちょうど1段上」だけは、たまに通る。ここが確定判定だと、
+  // 一度でも境目を測った人にとって、おねだりが計算問題になってしまう。
+  const over0 = pick.clsIdx - accIdx;
+  const stretched = over0 === 1 && Math.random() < CONFIG.serve.onedari.stretchChance;
+  if (pick.clsIdx > accIdx && !stretched) {
+    const over = over0;
     const drop = over >= 2 ? o.failAffectionFar : o.failAffection;
     cs.affection = clampAff(cs.affection + drop);
     if (moodOf(m) === 'ken') { explode(); return; }

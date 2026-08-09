@@ -401,6 +401,35 @@ playthrough('トリアージ　　', {
   onedari: stdOnedari, useNadameru: true,
 });
 
+// 2.5) おねだりの情報漏れ：**本文を見ずに、提示された値段だけを見る打ち手**が、
+//      内部状態を全部知っている打ち手にどこまで迫れるか。
+//      以前は提示の上限が必ず「通る階級+1」だったので、上から2番目の階級を選ぶだけで
+//      成功率100.00%・全知と同着だった＝おねだりが計算問題になっていた。
+//      成功率そのものではなく「知っていると何日速いか」で見る。慎重に打てば成功率は上がって当然で、
+//      問題はそれが得かどうかなので。
+{
+  const priceOnly = (offer) => {              // 提示の上から2番目の階級で、いちばん高いもの
+    const cls = [...new Set(offer.map(d => d.clsIdx))].sort((a, b) => b - a);
+    const target = cls.length >= 2 ? cls[1] : cls[0];
+    let bi = offer.findIndex(d => d.clsIdx === target);
+    offer.forEach((d, i) => { if (d.clsIdx === target && d.price > offer[bi].price) bi = i; });
+    return bi;
+  };
+  const med = (a) => { a.sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
+  const runN = (drinkPick) => med([...Array(5)].map(() => playthrough('x', {
+    dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
+    choose: best, onedari: stdOnedari, useNadameru: true, drinkPick,
+  }, true).State.day));
+  const omni = runN(undefined);               // 既定＝通る中で一番高いものを選ぶ全知の打ち手
+  const cheap = runN(priceOnly);
+  console.log(`\n[おねだりの情報漏れ] 全知 Day${omni} ／ 値段だけを見る打ち手 Day${cheap}`
+    + `（差 ${cheap - omni}日・3日以上が要件）`);
+  if (cheap - omni < 3) FAILURES.push(
+    `おねだりが計算問題になっている: 提示された値段を見るだけの打ち手が、`
+    + `内部状態を全部知っている打ち手に ${cheap - omni}日差まで迫っている`
+    + `\n  → buildOffer が acceptedClassIdx を材料に使っていないか確認すること。`);
+}
+
 // 3) 中級プレイ ×5: 6割正解（本命指標＝クリア日数。Day65〜95が目標帯）
 let midWins = 0;
 const midDays = [], midRepeat = [];
