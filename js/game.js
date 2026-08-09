@@ -225,6 +225,7 @@ G.newGame = function(){
     workedToday: false, workedYesterday: true,   // 朝のイベントの出し分け（昨夜、店に出たか）
     nagashiStreak: 0, lastNagashiDay: -9,        // 流しの連投を店長が見ている
     seikeiCount: 0, busuSeen: false, seikeiNight: -99,  // 12/27の初ダメ出し判定／整形した営業日
+    helpTroubleUsed: [],                         // 研修トラブルの既出（周回をまたいで残さない）
     sundayIdx: 0, sunday: null,                  // 日曜（店休）の街歩き
     workNo: 0, mobImgLog: {},                    // 営業日の通し番号／モブ画像を最後に出した営業日
     lastWarukuchi: -99,                          // 同僚の陰口を最後に聞いた日
@@ -899,7 +900,7 @@ function nextTable(){
     const firstStrike = maleMob && State.day >= bs.firstDay && !State.busuSeen;
     // 10営業日目以降は、容姿が45以下なら整形歴と無関係に一定確率で飛んでくる
     const lateStrike = maleMob && nightNo >= bs.lateFromNight
-      && State.stats.looks <= bs.lateLooksLine && rnd() < bs.lateChance;
+      && State.stats.looks < bs.lateLooksLine && rnd() < bs.lateChance;   // < に揃える（<= だと45で止まらず、本当の線が46になっていた）
     if (lateStrike) {
       State.busuSeen = true;
       n.current.insult = DATA.busuLines[Math.floor(rnd() * DATA.busuLines.length)];
@@ -913,9 +914,14 @@ function nextTable(){
     // 研修期間のトラブル（先輩の卓で、新人がやらかす／巻き込まれる）
     if (inTutorial() && !n.helpTroubleDone && rnd() < CONFIG.helpTrouble.chance) {
       n.helpTroubleDone = true;
+      // 研修は2夜・1夜1本なので、固定連番だと5本のうち先頭2本しか一生出なかった
+      // （実測40周：①40回 ②33回 ③④⑤ 0回）。まだ出していない中から引く
       const list = DATA.helpTroubles;
-      const tr = list[(State.helpTroubleIdx || 0) % list.length];
-      State.helpTroubleIdx = (State.helpTroubleIdx || 0) + 1;
+      const used = State.helpTroubleUsed || [];
+      const pool = list.filter((_, i) => !used.includes(i));
+      const pick = Math.floor(rnd() * pool.length);
+      const tr = pool[pick];
+      State.helpTroubleUsed = used.concat(list.indexOf(tr));
       n.current.trouble = tr;
       if (tr.mental)  State.mental  = clampMental(State.mental + tr.mental);
       if (tr.stamina) State.stamina = clampStamina(State.stamina + tr.stamina);
@@ -946,7 +952,13 @@ function nextTable(){
       // 本指名なら、まず「本指名が入りました！」の一枚を叩きつけてから状況説明へ
       phase: cs.visits >= 2 ? 'honshimeiCall' : 'mainIntro',
       firstMeet: !cs.met,
-      showSenpai: !cs.met && State.stats.intel >= CONFIG.intel.senpaiLine,
+      // 先輩の耳打ち。知性だけを条件にしていたら、序盤に来る客（院長・ご隠居・課長・IT社長）の
+      // 耳打ちが13周すべてで一度も出なかった。知性の初期値は20で、線は30。
+      // しかも !cs.met なので、一度会えば二度と機会がない＝院長の「超・地雷」の警告＝
+      // 設計書が最初の恐怖として指定している一枚が、恒久的に読まれなかった。
+      // 序盤のあいだは、レイナが横に付いている前提で無条件に出す。
+      showSenpai: !cs.met && (State.day <= CONFIG.intel.senpaiFreeUntil
+                              || State.stats.intel >= CONFIG.intel.senpaiLine),
       effChoices: null, choiceOrder: null, result: null, mindState: 'ok',
     };
     cs.met = true;
@@ -1945,6 +1957,7 @@ G.endPuchi = function(){ enterDay(); };
 G.oshiChoice = function(i){
   const e = State.oshiEvent;
   if (i === 0) {
+    if (State.money < e.cost) return;   // 昼メニューは弾いているのに、ここだけ残高が沈むまで買えた
     State.money -= e.cost;
     State.mental = clampMental(State.mental + e.buyMental);
     State.oshiResult = { text: e.buyText, note: `-${yen(e.cost)}／メンタル +${e.buyMental}` };
@@ -2558,7 +2571,7 @@ function renderOshiEvent(){
     ${sceneBanner('oshi')}
     <div class="story-box">${para(e.desc)}</div>
     <div class="choices">
-      <button class="choice" onclick="G.oshiChoice(0)">${esc(e.buyLabel)}（-${yen(e.cost)}）</button>
+      <button class="choice" onclick="G.oshiChoice(0)" ${State.money < e.cost ? 'disabled' : ''}>${esc(e.buyLabel)}（-${yen(e.cost)}）${State.money < e.cost ? '　……足りない' : ''}</button>
       <button class="choice" onclick="G.oshiChoice(1)">${esc(e.gamanLabel)}</button>
     </div>`;
 }
