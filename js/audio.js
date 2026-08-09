@@ -14,7 +14,9 @@
 //   笑いはBGMに入れない。しくじった瞬間の効果音（ズコー）だけに集中させる。
 //
 //   ゾーン: title / daily / work / rally / ending（切替は game.js の currentBgmZone）
-//   SE: click（全ボタン共通）／success（場内指名成立）／explosion（客が爆発）
+//   SE: click（全ボタン共通）／success（場内指名成立）／honshimei（本指名の入電）
+//       ／order（追加注文が入った）／explosion（客が爆発）／回答音4種
+//   音は3段階：🔊 全部 → 🔔 効果音だけ → 🔇 無音（右下のボタンで巡回）
 //
 //   譜面の書き方は SONGS のコメントを見ること。曲を直すのに、この上の実装は触らなくていい。
 // =========================================================================
@@ -48,7 +50,15 @@ const AudioCtl = (() => {
   let cur = null;                                   // 再生中の曲
   let zone = null;
   let unlocked = false;
-  let muted = localStorage.getItem('okujoMuted') === '1';
+  // 音は3段階。BGMだけ切りたい人がいる（作業中・電車の中・配信の裏で流したい）ので、
+  // 「全部」と「無音」の間に「効果音だけ」を挟む。
+  //   full … BGM＋効果音 ／ se … 効果音だけ ／ off … 無音
+  let mode = (() => {
+    const m = localStorage.getItem('okujoAudioMode');
+    if (m === 'full' || m === 'se' || m === 'off') return m;
+    return localStorage.getItem('okujoMuted') === '1' ? 'off' : 'full';   // 旧キーからの引き継ぎ
+  })();
+  let muted = mode === 'off';
   const last = {};                                  // SEの連打よけ
 
   function ready() {
@@ -92,6 +102,31 @@ const AudioCtl = (() => {
     src.start(t0);
   }
 
+  // コルクの「ポンッ」。高い所から一瞬で落とすと、抜けた感じになる
+  function pop(t0, out) {
+    const dest = out || master; if (!ctx || !dest) return;
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(1200, t0);
+    o.frequency.exponentialRampToValueAtTime(260, t0 + 0.055);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.085, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+    o.connect(g); g.connect(dest); o.start(t0); o.stop(t0 + 0.12);
+  }
+
+  // 泡。ブラシより高くて長い、シャンパンの立ち上がる音
+  function fizz(t0, dur, vol, out) {
+    const dest = out || master; if (!ctx || !dest) return;
+    const n = Math.floor(ctx.sampleRate * dur);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.2);
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 4200;
+    const g = ctx.createGain(); g.gain.value = vol;
+    src.connect(hp); hp.connect(g); g.connect(dest);
+    src.start(t0);
+  }
+
   // ウッドベースの胴鳴りに寄せたキック
   function kick(t0, out) {
     const dest = out || master; if (!ctx || !dest) return;
@@ -105,7 +140,7 @@ const AudioCtl = (() => {
   function setZone(z) {
     if (!SONGS[z] || z === zone) return;
     zone = z;
-    if (!unlocked || muted) return;               // 解錠前は「かけたい曲」を覚えるだけ
+    if (!unlocked || mode !== 'full') return;     // 解錠前・BGM切りは「かけたい曲」を覚えるだけ
     start(z);
   }
 
@@ -171,7 +206,7 @@ const AudioCtl = (() => {
     if (muted) return;
     if (!ready()) return;
     const now = ctx.currentTime;
-    const gap = { click: 0.04, success: 0.3, explosion: 0.4 }[kind] || 0.05;
+    const gap = { click: 0.04, success: 0.3, explosion: 0.4, honshimei: 0.8, order: 0.5 }[kind] || 0.05;
 
     if (last[kind] && now - last[kind] < gap) return;
     last[kind] = now;
@@ -187,6 +222,23 @@ const AudioCtl = (() => {
       note('triangle', 1568.0, now + 0.14, 0.2, 0.05, 6000);
       note('sine', 1975.5, now + 0.21, 0.5, 0.045, 8000);
       brush(now + 0.21, 0.02);
+    } else if (kind === 'honshimei') {
+      // 本指名の入電。場内（success）より格上なので、ベル2打で振り向かせてから
+      // Cm9 を下から積む。最後の9thだけ長く残して「席へ向かう時間」を作る
+      note('triangle', 1568.0, now, 0.12, 0.050, 7000);         // G6  ベル1打目
+      note('triangle', 2093.0, now + 0.10, 0.20, 0.045, 8000);  // C7  2打目
+      note('sine', 523.3, now + 0.26, 0.20, 0.048, 3000);       // C5
+      note('sine', 622.3, now + 0.34, 0.20, 0.048, 3000);       // Eb5
+      note('sine', 784.0, now + 0.42, 0.24, 0.048, 3000);       // G5
+      note('sine', 1174.7, now + 0.50, 0.85, 0.050, 6000);      // D6＝9th。開いたまま残す
+      brush(now + 0.50, 0.022);
+    } else if (kind === 'order') {
+      // 追加注文が入った音。コルクのポンッ→泡→上がる2音。
+      // 金の音なので回答音より明るく、でも本指名のベルより短く（山場を食わない）
+      pop(now);
+      fizz(now + 0.02, 0.34, 0.016);
+      note('triangle', 1046.5, now + 0.13, 0.20, 0.036, 6000);  // C6
+      note('triangle', 1568.0, now + 0.21, 0.30, 0.032, 7000);  // G6
     // ---- 回答音（接客中、選択肢を押した瞬間に鳴る4種）------------------
     // 4つで1つの家族。楽器を変えず、音程の動きだけで結果を伝える。
     // 別々の効果音を4つ置くと卓がうるさくなるし、場内指名の「チン」の格も下がる。
@@ -221,17 +273,27 @@ const AudioCtl = (() => {
     if (unlocked) return;
     unlocked = true;
     ready();
-    if (zone && !muted) start(zone);
+    if (zone && mode === 'full') start(zone);
   }
 
-  function toggleMute() {
-    muted = !muted;
-    localStorage.setItem('okujoMuted', muted ? '1' : '0');
+  function setMode(m) {
+    mode = m;
+    muted = mode === 'off';
+    localStorage.setItem('okujoAudioMode', mode);
+    localStorage.setItem('okujoMuted', muted ? '1' : '0');   // 旧キーも合わせておく
     if (master) master.gain.value = muted ? 0 : 1;
-    if (muted) stop();
-    else if (unlocked && zone) start(zone);
-    return muted;
+    if (mode === 'full') { if (unlocked && zone) start(zone); }
+    else stop();                                             // se も off も BGM は止める
+    return mode;
   }
+
+  // 🔊 全部 → 🔔 効果音だけ → 🔇 無音 → 🔊 …
+  function cycleMode() {
+    return setMode(mode === 'full' ? 'se' : mode === 'se' ? 'off' : 'full');
+  }
+
+  // 旧API。どこかが呼んでいても壊れないよう、全部⇔無音の2値として残す
+  function toggleMute() { setMode(muted ? 'full' : 'off'); return muted; }
 
   document.addEventListener('click', (e) => {
     unlock();
@@ -243,7 +305,7 @@ const AudioCtl = (() => {
     if (e.target.closest('button, .shimei-call')) playSe('click');
   }, true);
 
-  return { setZone, playSe, toggleMute, isMuted: () => muted };
+  return { setZone, playSe, toggleMute, cycleMode, getMode: () => mode, isMuted: () => muted };
 })();
 
 // =========================================================================
@@ -426,11 +488,22 @@ const SONGS = {
 };
 
 window.addEventListener('DOMContentLoaded', () => {
+  // 3段階トグル。押すたびに 全部 → 効果音だけ → 無音 と回る。
+  // 絵文字は「音符が減っていく」のではなく別物にする（🔊/🔉 だと差が分からない）
+  const FACE = {
+    full: { icon: '🔊', label: 'BGMも効果音も鳴る' },
+    se:   { icon: '🔔', label: '効果音だけ鳴る（BGMなし）' },
+    off:  { icon: '🔇', label: '無音' },
+  };
   const btn = document.createElement('button');
   btn.id = 'mute-btn';
   btn.type = 'button';
-  btn.textContent = AudioCtl.isMuted() ? '🔇' : '🔊';
-  btn.setAttribute('aria-label', 'ミュート切替');
-  btn.onclick = () => { btn.textContent = AudioCtl.toggleMute() ? '🔇' : '🔊'; };
+  const paint = (m) => {
+    btn.textContent = FACE[m].icon;
+    btn.title = FACE[m].label + '（押すと切替）';
+    btn.setAttribute('aria-label', '音の設定：' + FACE[m].label);
+  };
+  paint(AudioCtl.getMode());
+  btn.onclick = () => paint(AudioCtl.cycleMode());
   document.body.appendChild(btn);
 });

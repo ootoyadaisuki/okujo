@@ -952,6 +952,7 @@ function nextTable(){
     if (n.current.honshimei) {
       State.night.earned += CONFIG.pay.honshimeiBack;
       State.night.breakdown.push(`本指名バック（${cust.name}） ${yen(CONFIG.pay.honshimeiBack)}`);
+      AudioCtl.playSe('honshimei');   // 入電のベル。卓に着く前に鳴らす
     }
     shuffleChoices();
   }
@@ -1531,6 +1532,7 @@ G.onedariPick = function(idx){
         : `「ね、今日……${pick.name}、開けちゃいません？」\n\n「……しょうがないなあ」\n\n${pick.name}（${yen(price)}）が卓に入った！`;
 
   m.offer = null;
+  AudioCtl.playSe('order');   // ボトルが入った。コルクのポンッ
   m.onedariResult = { ok: true, nudge,
     text: `${head}（バック${rate}% ＝ +${yen(back)}）${nudge ? `\n\n${nudge}` : ''}` };
   m.phase = 'onedariResult';
