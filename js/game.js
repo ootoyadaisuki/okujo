@@ -2644,10 +2644,12 @@ function renderScene(){
   const i = State.scene.idx;
   const pg = sc.pages[i];
   const last = i >= sc.pages.length - 1;
-  // 背景つきの場面は、1ページ目で「どこにいるか」を見せ、2ページ目から話し手の顔に切り替える。
+  // 誰かが喋っているページでは、その人の顔を出す（レイナが喋っているのに内装写真、をやらない）。
+  // 背景は「どこにいるか」の一枚なので、話し手のいない最初の独白ページに敷く。
   // 両方を毎ページ積むと画像だけで画面が埋まり、本文がスクロールの外へ出る
-  const showBg = !!sc.bg && i === 0;
-  const visual = (pg.who === 'senpai' && !showBg)
+  const bgIdx = sc.bg ? sc.pages.findIndex(p => !p.who) : -1;
+  const showBg = bgIdx >= 0 && i === bgIdx;
+  const visual = (pg.who === 'senpai')
     ? `<div class="cust-head">
          <span class="cust-name">💄 ${esc(DATA.senpai.title)}</span>
        </div>
