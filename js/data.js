@@ -1447,7 +1447,17 @@ const DATA = {
     img, job, name, desc,
     rallies: rs.map(([line, ...cs]) => ({
       line,
-      choices: cs.map(([text, drinks, react, flag]) => ({ text, drinks, mental: 0, react, flag })),
+      // モブ卓の心のコストは、指名卓と同じ考え方で drinks から決める。
+      //   ・いちばん安いのは「流す」（1杯）＝指名卓の凡打にあたる
+      //   ・踏み込んで2杯もらう夜は、そのぶん削れる（指名卓の正解と同じ）
+      //   ・何も動かせなかった卓も、別の意味で削れる
+      // ここが全部 0 だった頃は、モブ60卓480択に減点が一つも無く、
+      // 研修（Day1-2）はモブ卓しか出ないので、
+      // このゲームの第一印象が「読まなくていい」になっていた。
+      choices: cs.map(([text, drinks, react, flag]) => ({
+        text, drinks, react, flag,
+        mental: drinks >= 2 ? -2 : drinks === 1 ? -1 : -2,
+      })),
     })),
   })),
 

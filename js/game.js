@@ -801,7 +801,9 @@ function drawTable(weird){
   const pk = weird ? 'weirdPos' : (tut ? 'mobPos' : 'lightPos');
   if (!State[dk] || State[pk] >= State[dk].length) {
     const pool = weird ? DATA.weirdTables
-      : tut ? (DATA.mobTables || [])
+      // 研修（Day1-2）もヘルプ卓を混ぜる。
+      // モブ卓だけだと、最初の2日に一度も心が削れないまま本番へ出ることになる
+      : tut ? [...DATA.lightTables, ...(DATA.mobTables || [])]
       : [...DATA.lightTables, ...(DATA.mobTables || [])];
     State[dk] = pool.slice().sort(() => rnd() - 0.5);
     State[pk] = 0;
