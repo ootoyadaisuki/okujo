@@ -3046,7 +3046,7 @@ function renderEnding(){
     : '🌧 GAME OVER';
   // エンディングごとに背景を出し分ける（クリア＝ライブ会場のご褒美絵、敗北も理由ごとに専用絵）
   const endingImg = State.win ? 'ending_clear'
-    : State.loseReason === 'fired' ? 'scene_fired'   // 空のロッカー。scene_mensetsu は初出勤と呼び出しで既に2回出ている
+    : State.loseReason === 'fired' ? 'scene_mensetsu'   // 面接をした事務所。契約書を書いた場所で、契約が終わる
     : 'ending_lose';
   const visual = `<div class="scene-visual"><img src="images/${endingImg}.webp" alt="" onerror="this.parentElement.style.display='none'"></div>`;
   $screen().innerHTML = `
