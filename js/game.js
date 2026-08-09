@@ -1652,14 +1652,12 @@ function ryunenUnsettled(){
   return State.uniAttended < CONFIG.uni.need && !State.uniWarned.ryunen;
 }
 
-// エンディングへ入る唯一の入口。3箇所でバラバラに screen を書き換えていたせいで、
-// 敗因を名乗る処理が抜けていた（loseReason に 'ryunen' を入れるコードが
-// どこにも無く、留年エンドの本文と専用絵が一度も表示されていなかった）。
-// 留年＝学費100万を背負った失敗は、卓の一言より重い。名乗らせないと、
-// 大学を落として負けた人が「あの夜、あの卓で」と卓のせいにして終わる。
+// エンディングへ入る唯一の入口。3箇所でバラバラに screen と win を
+// 書き換えていたので、1本にまとめてある。
+// 留年はエンディングでは扱わない。学費を自分で払うだけで、ゲームオーバーではないし、
+// 勝っても負けても3月1日の電話で話は終わっている（uniCalls.ryunen）。
 function settleEnding(win){
   State.win = win;
-  if (!win && !State.loseReason && State.uniWarned.ryunen) State.loseReason = 'ryunen';
   State.screen = 'ending';
 }
 
@@ -3042,16 +3040,13 @@ function winEndingText(){
 function renderEnding(){
   const text = State.win ? winEndingText()
     : State.loseReason === 'fired' ? DATA.ending.fired
-    : State.loseReason === 'ryunen' ? DATA.ending.ryunen
     : DATA.ending.lose;
   const label = State.win ? '🌸 CLEAR'
     : State.loseReason === 'fired' ? '💔 GAME OVER — 解雇'
-    : State.loseReason === 'ryunen' ? '🎓 GAME OVER — 留年'
     : '🌧 GAME OVER';
   // エンディングごとに背景を出し分ける（クリア＝ライブ会場のご褒美絵、敗北も理由ごとに専用絵）
   const endingImg = State.win ? 'ending_clear'
     : State.loseReason === 'fired' ? 'scene_fired'   // 空のロッカー。scene_mensetsu は初出勤と呼び出しで既に2回出ている
-    : State.loseReason === 'ryunen' ? 'scene_ryunen'
     : 'ending_lose';
   const visual = `<div class="scene-visual"><img src="images/${endingImg}.webp" alt="" onerror="this.parentElement.style.display='none'"></div>`;
   $screen().innerHTML = `

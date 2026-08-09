@@ -378,7 +378,9 @@ if (bestRun.bans.length) throw new Error('最適プレイで出禁が出た');
 if (bestRun.log.jonai === 0) throw new Error('最適プレイで場内指名が一度も付かなかった');
 if (bestRun.log.sales === 0) throw new Error('最適プレイでボトルが1本も入らなかった');
 if (bestRun.fired) throw new Error('最適プレイでクビになった');
-if (bestRun.State.loseReason === 'ryunen') throw new Error('大学に通ったのに留年した');
+// loseReason を見ていたが、そこに 'ryunen' が入ることは無い（留年は敗北理由ではない）。
+// 一度も発火しない判定だったので、本来の不変条件＝留年判定そのものを見る
+if (bestRun.State.uniWarned.ryunen) throw new Error('大学に通ったのに留年した');
 
 // 1.2) なだめない縛り: 正解は刺すが、心が折れても回復しない。
 //      brokenLine を踏んで選択肢が壊れ、爆発・出禁まで行くルートを毎回踏ませる。
