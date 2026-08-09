@@ -843,6 +843,131 @@ const MAXES = [
     + `\n     研修で最初に触るのがこの卓群なので、ここが「読まなくていい」だと第一印象がそれで決まる。`);
 }
 
+// 12z) 本命の判定：表面の特徴だけを使う分類器が、正解をどれだけ当てられるか。
+//
+//   1変数ルールを1本ずつ潰すやり方には限界がある。実際、
+//   「最長＝正解87%」を潰したら「長さ2位＝正解58%」が生えた。
+//   潰すたびに次が生えるのは、個々の記号ではなく
+//   「意味の型と表面の型が1対1で結びついている」ことが原因だから。
+//
+//   なので本当の合格条件は、本文の意味を一切見ず、表面の特徴（文字数・順位・
+//   句点数・読点数・記号・漢字率など）だけを与えた分類器の的中率で測る。
+//   4択なので当てずっぽうは25%。**35%以下**が要件。
+//
+//   モデルは conditional logit（卓の4択でソフトマックスを取り、正解の確率を上げる）。
+//   数字を盛らないよう5分割交差検証で、学習に使っていない卓だけで採点する。
+{
+  const CUST = vm.runInContext('CUSTOMERS', makeContext());
+  const core = t => t.replace(/^[「（]/, '').replace(/[」）]$/, '');
+  const kanji = t => (t.match(/[一-鿿]/g) || []).length / Math.max(1, t.length);
+
+  // 表面だけ。意味に関わるものは1つも入れない
+  const FEAT = [
+    t => t.length / 40,
+    t => (t.match(/。/g) || []).length,
+    t => (t.match(/、/g) || []).length,
+    t => (t.match(/…/g) || []).length / 2,
+    t => t.includes('！') ? 1 : 0,
+    t => t.includes('？') ? 1 : 0,
+    t => /[0-9０-９一二三四五六七八九十百千万]/.test(t) ? 1 : 0,
+    t => kanji(t) * 2,
+    t => /(です|ます|ません|でした|ましょ)/.test(t) ? 1 : 0,
+    t => core(t).startsWith('……') ? 1 : 0,
+    t => /[？?]$/.test(core(t)) ? 1 : 0,
+    t => t.includes('──') ? 1 : 0,
+    t => (core(t).includes('「') || core(t).includes('"')) ? 1 : 0,
+    t => /(もんね|ですもん|もん[。！？]?$)/.test(core(t)) ? 1 : 0,
+    t => t.includes('〜') ? 1 : 0,
+    t => ((t.match(/。/g) || []).length + 1) / 2,      // 文の数
+  ];
+  const RANKF = 4;   // 卓内の文字数順位を one-hot で
+
+  const TABLES = [];
+  for (const id of Object.keys(CUST)) {
+    for (const ep of CUST[id].episodes || []) {
+      for (const kind of ['first', 'jonai']) {
+        for (const u of ep[kind] || []) {
+          const chs = u.choices || [];
+          if (chs.length !== 4) continue;
+          const y = chs.findIndex(c => c.type === 'seikai');
+          if (y < 0) continue;
+          const order = chs.map((c, i) => [c.text.length, i]).sort((a, b) => b[0] - a[0]);
+          const rank = {}; order.forEach(([, i], r) => { rank[i] = r; });
+          const X = chs.map((c, i) => {
+            const f = FEAT.map(fn => fn(c.text));
+            for (let r = 0; r < RANKF; r++) f.push(rank[i] === r ? 1 : 0);
+            return f;
+          });
+          TABLES.push({ X, y });
+        }
+      }
+    }
+  }
+  const D = FEAT.length + RANKF;
+
+  function train(idx) {
+    // 学習に使う卓だけで標準化（評価する卓の情報を混ぜない）
+    const mu = new Array(D).fill(0), sd = new Array(D).fill(0);
+    let n = 0;
+    for (const i of idx) for (const x of TABLES[i].X) { for (let d = 0; d < D; d++) mu[d] += x[d]; n++; }
+    for (let d = 0; d < D; d++) mu[d] /= n;
+    for (const i of idx) for (const x of TABLES[i].X) for (let d = 0; d < D; d++) sd[d] += (x[d] - mu[d]) ** 2;
+    for (let d = 0; d < D; d++) sd[d] = Math.sqrt(sd[d] / n) || 1;
+
+    const w = new Array(D).fill(0);
+    const lr = 0.5, L2 = 1e-3;
+    for (let ep = 0; ep < 300; ep++) {
+      const g = new Array(D).fill(0);
+      for (const i of idx) {
+        const { X, y } = TABLES[i];
+        const z = X.map(x => { let s = 0; for (let d = 0; d < D; d++) s += w[d] * (x[d] - mu[d]) / sd[d]; return s; });
+        const mx = Math.max(...z), ex = z.map(v => Math.exp(v - mx));
+        const sum = ex.reduce((a, b) => a + b, 0);
+        for (let c = 0; c < 4; c++) {
+          const p = ex[c] / sum - (c === y ? 1 : 0);
+          for (let d = 0; d < D; d++) g[d] += p * (X[c][d] - mu[d]) / sd[d];
+        }
+      }
+      for (let d = 0; d < D; d++) w[d] -= lr * (g[d] / idx.length + L2 * w[d]);
+    }
+    return { w, mu, sd };
+  }
+  const predict = (m, X) => {
+    let best = 0, bv = -Infinity;
+    X.forEach((x, c) => {
+      let s = 0; for (let d = 0; d < D; d++) s += m.w[d] * (x[d] - m.mu[d]) / m.sd[d];
+      if (s > bv) { bv = s; best = c; }
+    });
+    return best;
+  };
+
+  const K = 5, order = TABLES.map((_, i) => i);
+  let hit = 0;
+  for (let k = 0; k < K; k++) {
+    const test = order.filter(i => i % K === k);
+    const trainIdx = order.filter(i => i % K !== k);
+    const m = train(trainIdx);
+    for (const i of test) if (predict(m, TABLES[i].X) === TABLES[i].y) hit++;
+  }
+  const acc = hit / TABLES.length * 100;
+  console.log(`\n[表面だけの分類器] ${TABLES.length}卓・${D}特徴・5分割交差検証`
+    + ` → 正解的中 ${acc.toFixed(1)}%（当てずっぽう25%／35%以下が要件）`);
+  // どの特徴が効いているか＝どこから直せば一番減るか
+  {
+    const NAMES = ['文字数', '句点の数', '読点の数', '「…」の数', '「！」', '「？」', '数字',
+      '漢字率', '敬語', '「……」で始まる', '問いかけで終わる', '「──」', '引用符', '「もん」系',
+      '「〜」', '文の数', '長さ1位', '長さ2位', '長さ3位', '長さ4位'];
+    const m = train(order);
+    const top = m.w.map((v, d) => [NAMES[d] || `f${d}`, v])
+      .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 6);
+    console.log('  効いている特徴: ' + top.map(([n, v]) => `${n}${v > 0 ? '+' : ''}${v.toFixed(2)}`).join(' / '));
+  }
+  if (acc > 35) FAILURES.push(
+    `本文の意味を一切見ない分類器が、表面の特徴だけで正解を ${acc.toFixed(1)}% 当てている（35%まで）。`
+    + `\n  → 個々の記号を潰すのではなく、「意味の型」と「表面の型（1文/2文・長さ帯）」を切り離すこと。`
+    + `\n     表面フォーマットは型ではなく卓に配る（4択すべて1文の卓／すべて2文の卓を作る）。`);
+}
+
 // 12b) 客ごとの偏り：全体で散っていても、特定の客だけ「最長＝正解」だと、その客の卓で読まれる
 const REWRITTEN = ['ishi', 'goinkyo', 'kacho', 'shacho', 'shitencho', 'geinin',
   'zeirishi', 'yakyu', 'kaicho', 'sekiyu', 'onzoshi', 'geino'];   // ← 全エピソードを決定稿にした客を足していく
@@ -877,9 +1002,9 @@ const REWRITTEN = ['ishi', 'goinkyo', 'kacho', 'shacho', 'shitencho', 'geinin',
     console.log(`[文字数テル] ${mark} ${id.padEnd(10)} ${String(tables).padStart(3)}卓  最長の型: ${dist}`);
     if (done && !ok) fail.push(`${id}(${worst[0]} ${worst[1].toFixed(0)}%)`);
   }
-  if (fail.length) throw new Error(
+  if (fail.length) FAILURES.push(
     `決定稿のはずの客で、最長の選択肢の型が偏っている: ${fail.join(', ')}`
-    + ` — 文字数から答えが割れる。どの型も40%以下に散らすこと。`);
+    + `\n  → その客の卓では文字数から答えが割れる。どの型も40%以下に散らすこと。`);
 }
 
 {
