@@ -2580,23 +2580,24 @@ function renderShukkin(){
   notes.push(`今夜の卓数：${n.plan.length}卓（1卓ごとに体力 ${CONFIG.stamina.perTable}）`);
   if (n.chikoku) notes.push(`遅刻した。店長の信頼 ${CONFIG.trust.chikoku}（いま ${State.trust}）`);
   if (n.eventLabel) notes.push(`${n.eventLabel}──今夜はドリンクバック×${n.drinkMult}`);
-  const story = n.mainCount >= 3 ? DATA.shukkinScenes.rush
-    : n.mainCount === 2 ? DATA.shukkinScenes.busy
-    : inTutorial() ? DATA.shukkinScenes.help   // Day2のみ（Day1は出勤画面を挟まない）
-    : DATA.shukkinScenes.normal;
-  // 遅刻した夜は、支度の話より遅刻の話が先に来る
-  const chikokuBox = n.chikoku
-    ? `<div class="story-box bad">${para(n.chikokuText)}</div>` : '';
-  // クリスマスイブなどの特別な夜は、専用ページを挟まずこの画面で説明する
-  const eventBox = n.eventLabel
+  // 語りの箱は必ず1つだけ。遅刻の話と支度の話とイベントの話を積むと、
+  // 「電車が止まっていた」の直後に「今日も頑張るぞ」が来るような渋滞になる。
+  // 消えたぶんの事実（遅刻 -5／ドリンクバック×2）は、下の note にすべて残る。
+  // 優先順：イベント＞遅刻＞指名だらけの夜＞研修＞ふだんの支度
+  //   イベントを遅刻より上に置くのは、遅刻は何度でも起きるがクリスマスは一度きりだから
+  const storyBox = n.eventLabel
     ? `<h3>🎄 ${esc(n.eventLabel)}</h3>
-       <div class="story-box">${para(DATA.nightEventScenes[State.day] || '')}</div>` : '';
+       <div class="story-box">${para(DATA.nightEventScenes[State.day] || '')}</div>`
+    : n.chikoku ? `<div class="story-box bad">${para(n.chikokuText)}</div>`
+    : `<div class="story-box">${para(
+        n.mainCount >= 3 ? DATA.shukkinScenes.rush
+        : n.mainCount === 2 ? DATA.shukkinScenes.busy
+        : inTutorial() ? DATA.shukkinScenes.help   // Day2のみ（Day1は出勤画面を挟まない）
+        : DATA.shukkinScenes.normal)}</div>`;
   $screen().innerHTML = `
     <h2>🚪 出勤</h2>
     <div class="scene-visual"><img src="images/bg1_final.webp" alt="" onerror="this.parentElement.style.display='none'"></div>
-    ${chikokuBox}
-    <div class="story-box">${para(story)}</div>
-    ${eventBox}
+    ${storyBox}
     <div class="note-box">${notes.map(t => `<p>・${esc(t)}</p>`).join('')}</div>
     <button class="btn btn-primary" onclick="G.enterFloor()">フロアへ出る</button>`;
 }
