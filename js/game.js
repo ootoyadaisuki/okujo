@@ -736,9 +736,9 @@ function startNight(){
     eventLabel: nev ? nev.label : null,
     eventShown: false,
     mainCount: mains.length,
-    // ボードに名前が載るのは本指名だけ。初来店の客は「指名卓」の枠には入るが、
+    // 本指名として名前を呼ばれるのは2回目以降の客だけ。初来店の客は「指名卓」の枠には入るが、
     // 卓に着けばバッジは「フリー」。ここを分けないと、フリーデビューの夜に
-    // 「指名がひとつ、ボードに入っている」と言ってしまう
+    // 「本指名がひとつ入っている」と言ってしまう
     honshimeiCount: mains.filter(id => (State.cust[id].visits || 0) >= 1).length,
     extraMains,
   };
@@ -2607,8 +2607,8 @@ function renderShukkin(){
   const notes = [];
   if (inTutorial()) notes.push('今夜も先輩のヘルプ。卓の空気を、まず覚える');
   else if (!n.honshimeiCount) notes.push('本指名は入っていない。今夜はフリーで勝負');
-  else if (n.honshimeiCount === 1) notes.push('本指名がひとつ、ボードに入っている');
-  else notes.push(`本指名が${n.honshimeiCount}件。……ボードを二度見した`);
+  else if (n.honshimeiCount === 1) notes.push('本指名がひとつ入っている');
+  else notes.push(`本指名が${n.honshimeiCount}件。……聞き返してしまった`);
   if (n.extraMains > 0) {
     const ob = CONFIG.overbooked;
     notes.push(`卓が重なる夜は、それだけで削れる（体力 ${ob.stamina * n.extraMains}／メンタル ${ob.mental * n.extraMains}）`);
