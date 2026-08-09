@@ -64,6 +64,27 @@ const State = {};
 const G = {}; // onclick用の窓口
 
 // ---------------------------------------------------------------------
+// 乱数（セーブに乗る）
+//
+// rnd() を直接使っていた頃は、夜の結果を全部見てからブラウザを
+// 再読み込みして「続きから」を押すと、その朝に戻って全部の目が振り直せた。
+// 売掛飛び -10万・整形の失敗・遅刻・発熱・陰口・おねだりの提示銘柄まで、
+// 気に入らない結果は無かったことにできた。
+//
+// 乱数の種を State に持たせてセーブに含めることで、同じ朝からは何度やっても
+// 同じ目が出るようにする。やり直しても状況は変わらない＝選び直すしかない。
+function rnd(){
+  // mulberry32。種は 32bit 符号なし整数
+  if (typeof State.seed !== 'number') State.seed = newSeed();
+  State.seed = (State.seed + 0x6D2B79F5) >>> 0;
+  let t = State.seed;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+function newSeed(){ return (Math.random() * 4294967296) >>> 0; }
+
+// ---------------------------------------------------------------------
 // セーブ（毎朝オートセーブ。localStorage・file://でも動く）
 // ---------------------------------------------------------------------
 const SAVE_KEY = 'okujo_save_v1';
@@ -122,6 +143,7 @@ G.continueGame = function(){
   if (State.workNo == null) State.workNo = 0;
   if (!State.mobImgLog) State.mobImgLog = {};
   if (State.lastWarukuchi == null) State.lastWarukuchi = -99;
+  if (typeof State.seed !== 'number') State.seed = newSeed();   // 乱数の種を持たない旧セーブ
   for (const id of Object.keys(CUSTOMERS)) {
     if (!State.cust[id]) {
       State.cust[id] = { affection: CONFIG.serve.affectionStart, banned: false, met: false, epIdx: 0, lastVisit: 0, visits: 0, lastSuccess: false, missionIdx: 0, donperiCount: 0, flags: [], usedFirst: [], usedJonai: [], usedPairs: [], jonaiCount: 0 };
@@ -152,6 +174,7 @@ G.newGame = function(){
   }
   Object.assign(State, {
     screen: 'intro', introIdx: 0,
+    seed: newSeed(),   // 乱数の種。セーブに乗るので、同じ朝からは同じ目が出る
     day: 1,
     money: CONFIG.start.money,
     stats: { looks: CONFIG.start.looks, intel: CONFIG.start.intel, talk: CONFIG.start.talk },
@@ -219,7 +242,7 @@ function recalcLooks(){
 
 // 重み付き抽選（[[値, 確率], ...]）
 function weightedRoll(table){
-  const r = Math.random();
+  const r = rnd();
   let acc = 0;
   for (const [v, p] of table) { acc += p; if (r < acc) return v; }
   return table[table.length - 1][0];
@@ -236,7 +259,7 @@ const MENU_CMDS = {
 };
 
 // [min, max] の配列なら範囲ランダム、数値ならそのまま
-const rangeVal = v => Array.isArray(v) ? Math.floor(v[0] + Math.random() * (v[1] - v[0] + 1)) : v;
+const rangeVal = v => Array.isArray(v) ? Math.floor(v[0] + rnd() * (v[1] - v[0] + 1)) : v;
 
 // 昼コマンド・メニュー項目の効果を適用して notes に記録する
 function applyEffects(o, notes){
@@ -314,15 +337,15 @@ G.pickDay = function(id){
     notes.push(`出席 ${State.uniAttended}/${CONFIG.uni.need}${State.uniAttended >= CONFIG.uni.need ? '　🎓 進級ライン到達！' : ''}`);
     story = DATA.uniScenes[State.uniIdx % DATA.uniScenes.length];
     State.uniIdx++;
-    if (Math.random() < CONFIG.uni.buzz.chance) State.uniBuzz = true;  // 講義ネタは夜の卓で光ることがある
+    if (rnd() < CONFIG.uni.buzz.chance) State.uniBuzz = true;  // 講義ネタは夜の卓で光ることがある
     // キャンパスの出来事（噂は階段式に進む。ある日、学校中に知れ渡る）
     const uev = CONFIG.uni.event;
-    if (State.uniRumor < DATA.uniRumorEvents.length && Math.random() < uev.rumorChance) {
+    if (State.uniRumor < DATA.uniRumorEvents.length && rnd() < uev.rumorChance) {
       const ev = DATA.uniRumorEvents[State.uniRumor++];
       story += '\n\n' + ev.text;
       applyUniEvent(ev, notes);
-    } else if (Math.random() < uev.chance) {
-      const ev = DATA.uniRandomEvents[Math.floor(Math.random() * DATA.uniRandomEvents.length)];
+    } else if (rnd() < uev.chance) {
+      const ev = DATA.uniRandomEvents[Math.floor(rnd() * DATA.uniRandomEvents.length)];
       story += '\n\n' + ev.text;
       applyUniEvent(ev, notes);
     }
@@ -380,7 +403,7 @@ G.pickSeikeiClinic = function(i){
   State.seikeiCount = (State.seikeiCount || 0) + 1;   // 一度でも手を入れたか（12/27の初ダメ出し判定に使う）
   State.seikeiNight = State.workNo || 0;              // いつ入れたか（数日は容姿の話をされない猶予）
   let story;
-  if (Math.random() < c.rate) {
+  if (rnd() < c.rate) {
     const before = State.parts[pid];
     State.parts[pid] = Math.min(CONFIG.parts.max, before + c.gain);
     recalcLooks();
@@ -419,7 +442,7 @@ function nightGates(){
     render();
     return true;
   }
-  if (State.stamina < CONFIG.stamina.sickLine && Math.random() < CONFIG.stamina.sickChance) {
+  if (State.stamina < CONFIG.stamina.sickLine && rnd() < CONFIG.stamina.sickChance) {
     State.screen = 'sick';
     render();
     return true;
@@ -437,7 +460,7 @@ G.toNightNagashi = function(){
   if (nightGates()) return;
   const ng = CONFIG.nagashi;
   const nev = CONFIG.nightEvents[State.day];
-  const drinks = Math.floor(ng.drinks[0] + Math.random() * (ng.drinks[1] - ng.drinks[0] + 1));
+  const drinks = Math.floor(ng.drinks[0] + rnd() * (ng.drinks[1] - ng.drinks[0] + 1));
   const earned = ng.wage - CONFIG.pay.hairSet + drinks * CONFIG.pay.drinkBack * (nev ? nev.drinkMult : 1);
   State.mental = clampMental(State.mental + ng.mental);
   State.stamina = clampStamina(State.stamina + ng.stamina);
@@ -480,8 +503,8 @@ G.skipWork = function(){
   const tier = Math.min(State.skipStreak, 3) - 1;
   const dTrust = sw.trust[tier];
   addTrust(dTrust, `希望休${State.skipStreak >= 2 ? `（${State.skipStreak}連続）` : ''}`);
-  const st = sw.stamina[0] + Math.floor(Math.random() * (sw.stamina[1] - sw.stamina[0] + 1));
-  const me = sw.mental[0] + Math.floor(Math.random() * (sw.mental[1] - sw.mental[0] + 1));
+  const st = sw.stamina[0] + Math.floor(rnd() * (sw.stamina[1] - sw.stamina[0] + 1));
+  const me = sw.mental[0] + Math.floor(rnd() * (sw.mental[1] - sw.mental[0] + 1));
   State.stamina = clampStamina(State.stamina + st);
   State.mental = clampMental(State.mental + me);
   State.skipResult = { scene: DATA.skipScenes[tier], st, me, dTrust };
@@ -690,9 +713,9 @@ function startNight(){
   if (State.day === 1) { State.night.showIntro = true; State.night.tutorialIdx = 0; }
   // 遅刻：出勤10回に1回くらい、間に合わない。夜は働けるが、店長の信頼だけ削れる
   const ck = CONFIG.chikoku;
-  if (State.day >= ck.fromDay && !inTutorial() && Math.random() < ck.chance) {
+  if (State.day >= ck.fromDay && !inTutorial() && rnd() < ck.chance) {
     State.night.chikoku = true;
-    State.night.chikokuText = DATA.chikokuScenes[Math.floor(Math.random() * DATA.chikokuScenes.length)];
+    State.night.chikokuText = DATA.chikokuScenes[Math.floor(rnd() * DATA.chikokuScenes.length)];
     addTrust(CONFIG.trust.chikoku, '遅刻');
   }
   // 卓に着く前に、まず「出勤」の一枚。今夜の店の顔ぶれを、支度をしながら受け取る
@@ -737,7 +760,7 @@ function drawTable(weird){
     const pool = weird ? DATA.weirdTables
       : tut ? (DATA.mobTables || [])
       : [...DATA.lightTables, ...(DATA.mobTables || [])];
-    State[dk] = pool.slice().sort(() => Math.random() - 0.5);
+    State[dk] = pool.slice().sort(() => rnd() - 0.5);
     State[pk] = 0;
   }
   // 出せない卓（女性客が早すぎる／同じ顔が続く）は飛ばして次を引く
@@ -793,7 +816,7 @@ function nextTable(){
       picked: null,
       totalDrinks: 0,
       totalBack: 0,
-      order: [...Array(table.rallies[0].choices.length).keys()].sort(() => Math.random() - 0.5),
+      order: [...Array(table.rallies[0].choices.length).keys()].sort(() => rnd() - 0.5),
       notice: weird && !n.weirdNoticeShown,
       mobAff: CONFIG.mobAff.start,
       topicId: null,
@@ -827,19 +850,19 @@ function nextTable(){
     const firstStrike = maleMob && State.day >= bs.firstDay && !State.busuSeen;
     // 10営業日目以降は、容姿が45以下なら整形歴と無関係に一定確率で飛んでくる
     const lateStrike = maleMob && nightNo >= bs.lateFromNight
-      && State.stats.looks <= bs.lateLooksLine && Math.random() < bs.lateChance;
+      && State.stats.looks <= bs.lateLooksLine && rnd() < bs.lateChance;
     if (lateStrike) {
       State.busuSeen = true;
-      n.current.insult = DATA.busuLines[Math.floor(Math.random() * DATA.busuLines.length)];
+      n.current.insult = DATA.busuLines[Math.floor(rnd() * DATA.busuLines.length)];
       State.mental = clampMental(State.mental + bs.mental);
     } else if (maleMob && State.day >= bs.fromDay && State.stats.looks < bs.looksCeil
-        && (firstStrike || Math.random() < (bs.looksCeil - State.stats.looks) * bs.ratePerPoint)) {
+        && (firstStrike || rnd() < (bs.looksCeil - State.stats.looks) * bs.ratePerPoint)) {
       State.busuSeen = true;
-      n.current.insult = DATA.busuLines[Math.floor(Math.random() * DATA.busuLines.length)];
+      n.current.insult = DATA.busuLines[Math.floor(rnd() * DATA.busuLines.length)];
       State.mental = clampMental(State.mental + bs.mental);
     }
     // 研修期間のトラブル（先輩の卓で、新人がやらかす／巻き込まれる）
-    if (inTutorial() && !n.helpTroubleDone && Math.random() < CONFIG.helpTrouble.chance) {
+    if (inTutorial() && !n.helpTroubleDone && rnd() < CONFIG.helpTrouble.chance) {
       n.helpTroubleDone = true;
       const list = DATA.helpTroubles;
       const tr = list[(State.helpTroubleIdx || 0) % list.length];
@@ -911,8 +934,8 @@ G.pickLight = function(orderIdx){
   cur.bonus = null;
   const mo = CONFIG.pay.mobOrder;
   const lastRally = cur.rally + 1 >= cur.table.rallies.length;
-  if (lastRally && State.day >= mo.fromDay && cur.table.img && cur.totalDrinks >= mo.minDrinks && Math.random() < mo.chance) {
-    const it = mo.items[Math.floor(Math.random() * mo.items.length)];
+  if (lastRally && State.day >= mo.fromDay && cur.table.img && cur.totalDrinks >= mo.minDrinks && rnd() < mo.chance) {
+    const it = mo.items[Math.floor(rnd() * mo.items.length)];
     const bonusBack = Math.round(it.price * CONFIG.pay.bottleBackRate);
     State.night.earned += bonusBack;
     State.night.breakdown.push(`${it.label}（${cur.table.name}） ${yen(bonusBack)}`);
@@ -943,7 +966,7 @@ G.lightNext = function(){
     cur.rally++;
     cur.picked = null;
     cur.phase = 'pick';
-    cur.order = [...Array(cur.table.rallies[cur.rally].choices.length).keys()].sort(() => Math.random() - 0.5);
+    cur.order = [...Array(cur.table.rallies[cur.rally].choices.length).keys()].sort(() => rnd() - 0.5);
     render();
     return;
   }
@@ -987,7 +1010,7 @@ function buildChoices(m){
     m.mindState = 'broken';
   } else if (State.mental <= mc.tiredLine) {
     // 頭が回らない：ベストの一言だけが浮かばず、代わりに疲れた心の一言が混ざる（計4択のまま）
-    const extra = DATA.tsukareChoices[Math.floor(Math.random() * DATA.tsukareChoices.length)];
+    const extra = DATA.tsukareChoices[Math.floor(rnd() * DATA.tsukareChoices.length)];
     const rest = turn.choices.filter(c => c.type !== 'seikai');
     m.effChoices = [...rest, extra];
     m.mindState = 'tired';
@@ -1000,7 +1023,7 @@ function buildChoices(m){
 function shuffleChoices(){
   const m = State.night.current;
   buildChoices(m);
-  m.choiceOrder = [...Array(m.effChoices.length).keys()].sort(() => Math.random() - 0.5);
+  m.choiceOrder = [...Array(m.effChoices.length).keys()].sort(() => rnd() - 0.5);
 }
 
 function affGain(type, rally){
@@ -1269,7 +1292,7 @@ G.startJonai = function(){
 // ---- おねだり ----
 // 4本の中から自分で選ぶ。上の階級ほど客が首を縦に振らなくなる。
 // 好感度＝今夜の温度、関係値＝積み上げてきたもの。ハイクラス以上は両方ないと開かない。
-const pickOne = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const pickOne = (arr) => arr[Math.floor(rnd() * arr.length)];
 const CLASS_ORDER = ['entry', 'middle', 'high', 'elite'];
 // 旧データ（tierCap/tierFloor）の語彙を、階級の語彙に読み替える
 const CAP_TO_CLASS = { spark: 'entry', champagne: 'middle', donperi: 'elite', roze: 'elite' };
@@ -1345,7 +1368,7 @@ function buildOffer(m){
     if (ci < loIdx || ci > topIdx) return false;
     const pool = drinksOf(ci).filter(d => !usedNames.has(d.name));
     if (!pool.length) return false;
-    const d = pool[Math.floor(Math.random() * pool.length)];
+    const d = pool[Math.floor(rnd() * pool.length)];
     usedNames.add(d.name);
     picked.push({ name: d.name, price: d.price, cls: CLASS_ORDER[ci], clsIdx: ci });
     return true;
@@ -1355,7 +1378,7 @@ function buildOffer(m){
   while (picked.length < n && guard++ < 200) {
     let tot = 0;
     for (let i = loIdx; i <= topIdx; i++) tot += w[i] || 0;
-    let r = Math.random() * (tot || 1), ci = loIdx;
+    let r = rnd() * (tot || 1), ci = loIdx;
     for (let i = loIdx; i <= topIdx; i++) { r -= (w[i] || 0); if (r <= 0) { ci = i; break; } }
     if (!takeFrom(ci)) { for (let i = topIdx; i >= loIdx; i--) if (takeFrom(i)) break; }
   }
@@ -1383,7 +1406,7 @@ G.onedariPick = function(idx){
   // ただし「ちょうど1段上」だけは、たまに通る。ここが確定判定だと、
   // 一度でも境目を測った人にとって、おねだりが計算問題になってしまう。
   const over0 = pick.clsIdx - accIdx;
-  const stretched = over0 === 1 && Math.random() < CONFIG.serve.onedari.stretchChance;
+  const stretched = over0 === 1 && rnd() < CONFIG.serve.onedari.stretchChance;
   if (pick.clsIdx > accIdx && !stretched) {
     const over = over0;
     const drop = over >= 2 ? o.failAffectionFar : o.failAffection;
@@ -1463,7 +1486,7 @@ function endNight(){
   const nn = State.night;
   if (!nn.scolded && State.screen !== 'soutai'
       && ((nn.chenjiCount || 0) >= 1 || (nn.jiraiCount || 0) >= sc.jiraiLine)
-      && Math.random() < sc.chance) {
+      && rnd() < sc.chance) {
     nn.scolded = true;
     State.mental = clampMental(State.mental + sc.mental);
     State.stamina = clampStamina(State.stamina + sc.stamina);
@@ -1479,7 +1502,7 @@ function endNight(){
   if (!nn.warukuchiDone && State.screen !== 'soutai'
       && State.day >= wk.fromDay
       && State.day - (State.lastWarukuchi || -99) >= wk.minGap
-      && Math.random() < wk.chance + soldTonight * wk.bonusPerBottle) {
+      && rnd() < wk.chance + soldTonight * wk.bonusPerBottle) {
     nn.warukuchiDone = true;
     State.lastWarukuchi = State.day;
     const list = DATA.warukuchiScenes;
@@ -1494,10 +1517,10 @@ function endNight(){
   // 閉店後、まれにモブ客からアフターの誘い
   const ai = CONFIG.afterInvite;
   const seen = State.night.mobsSeen || [];
-  if (State.day >= ai.fromDay && !State.night.afterDone && State.screen !== 'soutai' && !State.afterReturn && seen.length && Math.random() < ai.chance) {
+  if (State.day >= ai.fromDay && !State.night.afterDone && State.screen !== 'soutai' && !State.afterReturn && seen.length && rnd() < ai.chance) {
     State.night.afterDone = true;
     State.night.wasFull = true;   // 皆勤ぶんの信頼はアフター後に付ける
-    State.afterGuest = seen[Math.floor(Math.random() * seen.length)];
+    State.afterGuest = seen[Math.floor(rnd() * seen.length)];
     State.afterResult = null;
     State.screen = 'after';
     render();
@@ -1520,13 +1543,13 @@ G.afterChoice = function(i){
   const ai = CONFIG.afterInvite;
   const g = State.afterGuest;
   if (i === 0) {
-    const fun = Math.random() < ai.funRate;
+    const fun = rnd() < ai.funRate;
     const eff = fun ? ai.fun : ai.bore;
     State.stamina = clampStamina(State.stamina + eff.stamina);
     State.mental = clampMental(State.mental + eff.mental);
     if (fun) {
       const d = ai.returnDelay;
-      State.afterReturn = { day: State.day + d[0] + Math.floor(Math.random() * (d[1] - d[0] + 1)), name: g.name };
+      State.afterReturn = { day: State.day + d[0] + Math.floor(rnd() * (d[1] - d[0] + 1)), name: g.name };
       State.afterResult = { text: DATA.afterScenes.fun, note: `体力 +${eff.stamina}／メンタル +${eff.mental}／……${g.name}さん、また来てくれるかも` };
     } else {
       State.afterResult = { text: DATA.afterScenes.bore, note: `体力 ${eff.stamina}／メンタル ${eff.mental}／再来の気配は、ない` };
@@ -1648,11 +1671,11 @@ function enterDay(){
   const bg = CONFIG.binge;
   if (State.mental < bg.line
       && State.day - (State.lastBinge || -99) >= bg.cooldownDays
-      && Math.random() < bg.chance) {
+      && rnd() < bg.chance) {
     State.lastBinge = State.day;
     State.money -= bg.cost;
     State.mental = clampMental(State.mental + bg.mental);
-    State.bingeScene = DATA.bingeScenes[Math.floor(Math.random() * DATA.bingeScenes.length)];
+    State.bingeScene = DATA.bingeScenes[Math.floor(rnd() * DATA.bingeScenes.length)];
     State.screen = 'binge';
     render();
     return;
@@ -1692,7 +1715,7 @@ function enterDay(){
   // 昨夜の過ごし方に合うものだけを、上から順に消化する
   //   出勤した朝＝店・客・帰り道の話／休んだ朝＝部屋にいた人間の話（通販・投げ銭など）
   const pz = CONFIG.puchi;
-  if (State.day - (State.lastPuchi || 0) >= pz.minGap && Math.random() < pz.chance) {
+  if (State.day - (State.lastPuchi || 0) >= pz.minGap && rnd() < pz.chance) {
     const mode = State.workedYesterday ? 'work' : 'off';
     const idx = DATA.puchiEvents.findIndex((e, i) =>
       !State.puchiUsed[i] && (!e.when || e.when === mode));
@@ -2113,8 +2136,8 @@ G.toSunday = function(){
     // noSundayMeet の客は街で鉢合わせない（共有の鉢合わせ文面が成立しない相手）
     return cs && cs.visits >= 2 && !cs.banned && !CUSTOMERS[id].noSundayMeet;
   });
-  if (honshimeiIds.length && Math.random() < CONFIG.sunday.honshimeiChance) {
-    const custId = honshimeiIds[Math.floor(Math.random() * honshimeiIds.length)];
+  if (honshimeiIds.length && rnd() < CONFIG.sunday.honshimeiChance) {
+    const custId = honshimeiIds[Math.floor(rnd() * honshimeiIds.length)];
     State.sunday = { kind: 'honshimei', custId, picked: null };
   } else {
     const list = DATA.sundayEvents;
@@ -2159,7 +2182,7 @@ G.endSunday = function(){
 
 G.apologize = function(){
   const ap = CONFIG.apologize;
-  const gain = ap.trust[0] + Math.floor(Math.random() * (ap.trust[1] - ap.trust[0] + 1));
+  const gain = ap.trust[0] + Math.floor(rnd() * (ap.trust[1] - ap.trust[0] + 1));
   addTrust(gain, '頭を下げた');
   State.mental = clampMental(State.mental + ap.mental);
   State.apologizeResult = { gain };

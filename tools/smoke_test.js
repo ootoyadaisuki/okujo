@@ -401,6 +401,30 @@ playthrough('トリアージ　　', {
   onedari: stdOnedari, useNadameru: true,
 });
 
+// 2.4) セーブスカム対策：乱数がセーブに乗っているか。
+//      Math.random() を直に使っていた頃は、夜の結果を全部見てから再読み込みして
+//      「続きから」を押すと、その朝から全部の目が振り直せた
+//      （売掛飛び -10万・整形の失敗・遅刻・発熱・陰口・おねだりの提示銘柄）。
+//      同じ種・同じ打ち手なら、何度走らせても completely 同じ結果になることを確かめる。
+{
+  const real = Math.random;
+  Math.random = () => 0.42;          // newSeed() を固定する＝同じ種で始める
+  const p = { dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
+    choose: best, onedari: stdOnedari, useNadameru: true };
+  const a = playthrough('x', p, true), b = playthrough('x', p, true);
+  Math.random = real;
+  const key = (r) => `${r.State.day}/${r.State.money}/${r.log.sales}/${r.log.explosions}/${r.log.sick}/${r.log.seikei}/${r.bans.join(',')}`;
+  if (key(a) !== key(b)) throw new Error(
+    `同じ種から始めたのに結果が違う＝乱数がセーブに乗っていない（セーブスカムし放題）:\n  ${key(a)}\n  ${key(b)}`);
+  console.log(`\n[セーブスカム] 同じ種・同じ打ち手で結果が一致（${key(a)}）`);
+  // game.js に素の Math.random() が残っていると、そこだけ振り直せてしまう
+  const src = fs.readFileSync(path.join(__dirname, '..', 'js/game.js'), 'utf8');
+  const bare = (src.match(/Math\.random\(\)/g) || []).length;
+  if (bare > 1) throw new Error(
+    `js/game.js に素の Math.random() が ${bare} 箇所ある（種を経由する rnd() を使うこと。`
+    + `例外は newSeed() の1箇所だけ）`);
+}
+
 // 2.5) おねだりの情報漏れ：**本文を見ずに、提示された値段だけを見る打ち手**が、
 //      内部状態を全部知っている打ち手にどこまで迫れるか。
 //      以前は提示の上限が必ず「通る階級+1」だったので、上から2番目の階級を選ぶだけで
