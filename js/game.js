@@ -110,6 +110,29 @@ function clearSave(){
   try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
 }
 
+// ---------------------------------------------------------------------
+// 周回の記録（セーブとは別。エンディングで消えない）
+//
+// この100日を何度目に走っているか。2周目から初めて出てくる客がいる。
+// 「金を落とさないのに指名枠を1つ潰す客」の痛みは、
+// 指名枠が1晩1つしかないことを身体で知っている人にしか効かない。
+// 1周目に出しても「なんとなく長居する人」で終わる。
+// ---------------------------------------------------------------------
+const META_KEY = 'okujo_meta_v1';
+
+function readMeta(){
+  try { return JSON.parse(localStorage.getItem(META_KEY)) || {}; } catch (e) { return {}; }
+}
+function bumpRuns(){
+  try {
+    const m = readMeta();
+    m.runs = (m.runs || 0) + 1;
+    localStorage.setItem(META_KEY, JSON.stringify(m));
+  } catch (e) {}
+}
+// いま走っている周回が何周目か（1始まり）
+function runNo(){ return State.runNo || 1; }
+
 G.continueGame = function(){
   const s = loadSaved();
   if (!s) { State.screen = 'title'; render(); return; }
@@ -175,6 +198,7 @@ G.newGame = function(){
   Object.assign(State, {
     screen: 'intro', introIdx: 0,
     seed: newSeed(),   // 乱数の種。セーブに乗るので、同じ朝からは同じ目が出る
+    runNo: (readMeta().runs || 0) + 1,   // 何周目か。2周目から出てくる客がいる
     day: 1,
     money: CONFIG.start.money,
     stats: { looks: CONFIG.start.looks, intel: CONFIG.start.intel, talk: CONFIG.start.talk },
@@ -552,7 +576,9 @@ function spotGraduated(id){
 // 来店資格：出禁でない／登場日（fromDay）を迎えている／スポット卒業していない
 function custActive(id){
   const cs = State.cust[id];
-  return !cs.banned && State.day >= (CUSTOMERS[id].fromDay || 1) && !spotGraduated(id);
+  const c = CUSTOMERS[id];
+  if (runNo() < (c.fromRun || 1)) return false;   // 2周目以降にしか来ない客
+  return !cs.banned && State.day >= (c.fromDay || 1) && !spotGraduated(id);
 }
 
 // 研修期間：最初の2日は先輩のヘルプ。モブ卓だけを回され、場内指名も起きない
@@ -1080,6 +1106,9 @@ G.pickChoice = function(orderIdx){
     return;
   }
   AudioCtl.playSe(ch.type);   // seikai=チン / bonda=ボッ / hazure=ボ、ト / jirai=ズッ
+
+  // 指名卓でも売掛を通してしまうことがある（"投資家"ヨコタのツケ）
+  if (ch.flag === 'tobi') State.tobiDay = State.day + CONFIG.tobi.delayDays;
 
   const dAff = capAffUp(m, affGain(ch.type, rallyNo(m)));
   const dMental = mentalCost(ch.type);
@@ -1964,7 +1993,12 @@ function render(){
   if (S === 'night') return renderNight();
   if (S === 'soutai') return renderSoutai();
   if (S === 'nightResult') return renderNightResult();
-  if (S === 'ending') { clearSave(); return renderEnding(); }
+  if (S === 'ending') {
+    clearSave();
+    // render() は何度も走るので、1回のエンディングで1回だけ数える
+    if (!State.endingCounted) { State.endingCounted = true; bumpRuns(); }
+    return renderEnding();
+  }
 }
 
 function renderTitle(){
