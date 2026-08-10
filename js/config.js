@@ -252,7 +252,7 @@ const CONFIG = {
   shumi: {
     options: [
       { id: 'haishin', label: '推しの配信を見る',   cost: 0,     mental: 50 },
-      { id: 'sauna',   label: 'サウナで"整う"',      cost: 1800,  mental: 40, stamina: 8,  topic: 'sauna' },
+      { id: 'sauna',   label: 'サウナでととのう',      cost: 1800,  mental: 40, stamina: 8,  topic: 'sauna' },
       { id: 'eiga',    label: '映画を観る（単館系）', cost: 1900,  mental: 38, topic: 'eiga' },
       { id: 'karaoke', label: 'ヒトカラで熱唱',     cost: 1500,  mental: 35, stamina: -5, topic: 'ongaku' },
       { id: 'cafe',    label: 'カフェでスイーツ',   cost: 1200,  mental: 30, stamina: 10, topic: 'sweets' },
@@ -474,9 +474,6 @@ const CONFIG = {
       hazureDrop: 1,          // マイナス圏でハズレを踏んだときの下げ幅
       jiraiDrop: 2,           // マイナス圏で地雷を踏んだときの下げ幅
     },
-
-    // 〈必死になだめる〉（機嫌〈険〉直後のターンに出現する回避の窓）
-    nadameru: { affection: -15, mental: -20 },
 
     // 爆発（機嫌〈険〉でさらに踏み抜いた）。
     // ただし「出禁」まで行くのは、そもそも関係が冷えている相手だけ。

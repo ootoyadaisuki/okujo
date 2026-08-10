@@ -393,7 +393,7 @@ G.pickDay = function(id){
 const MENU_ITEM_SCENE = {
   run: 'kintore_run', gym: 'kintore_gym', personal: 'kintore_gym',
   manga: 'dokusho', jiko: 'dokusho', shosetsu: 'dokusho', shinbun: 'dokusho',
-  karaoke: 'karaoke', eiga: 'eiga', cafe: 'cafe', sauna: null,
+  karaoke: 'karaoke', eiga: 'eiga', cafe: 'cafe', sauna: 'sauna',
 };
 
 // メニュー項目の確定
@@ -707,6 +707,26 @@ function pickMains(){
 }
 
 function startNight(){
+  // 出勤前のプチイベント（「拾った財布」「看板の灯り」＝出勤の道すがらの話はここで挟む）
+  {
+    const pz = CONFIG.puchi;
+    if (State.day - (State.lastPuchi || 0) >= pz.minGap && rnd() < pz.chance) {
+      const idx = DATA.puchiEvents.findIndex((e, i) => !State.puchiUsed[i] && e.when === 'prework');
+      if (idx >= 0) {
+        State.puchiUsed[idx] = true;
+        State.lastPuchi = State.day;   // 同日再入場では minGap で弾かれる＝二重発火しない
+        const ev = DATA.puchiEvents[idx];
+        if (ev.mental)  State.mental  = clampMental(State.mental + ev.mental);
+        if (ev.stamina) State.stamina = clampStamina(State.stamina + ev.stamina);
+        if (ev.money)   State.money  += ev.money;
+        State.puchiEvent = ev;
+        State.puchiNext = 'night';
+        State.screen = 'puchi';
+        render();
+        return;
+      }
+    }
+  }
   State.workNo = (State.workNo || 0) + 1;   // 営業日の通し番号（モブ画像の寝かせに使う）
   const { mains, weird, punish } = pickMains();
   const plan = [];
@@ -938,7 +958,6 @@ function nextTable(){
       turn: 0, correct: 0, rallies: 0, drinksSettled: false,
       tension: 0,
       sold: null, exploded: false,
-      nadameruWindow: false,
       // 本指名なら、まず「本指名が入りました！」の一枚を叩きつけてから状況説明へ
       phase: cs.visits >= 2 ? 'honshimeiCall' : 'mainIntro',
       firstMeet: !cs.met,
@@ -1142,8 +1161,6 @@ G.pickChoice = function(orderIdx){
   State.mental = clampMental(State.mental + dMental);
   m.rallies++;
 
-  m.nadameruWindow = false;
-  const beforeMood = moodOf(m);
   // ボトルが入ったあとの連続正解＝2本目の窓（途切れたらリセット）
   m.streakSinceSale = ch.type === 'seikai' ? (m.streakSinceSale || 0) + 1 : 0;
   if (ch.type === 'seikai') {
@@ -1151,25 +1168,10 @@ G.pickChoice = function(orderIdx){
     tensionUp(m, 1);            // 正解のたびに表情が一段明るくなる
   } else if (ch.type === 'hazure' || ch.type === 'jirai') {
     tensionDrop(m, ch.type);    // プラス圏からの失敗は一気に-1（落差）
-    if (moodOf(m) === 'ken' && beforeMood !== 'ken') m.nadameruWindow = true; // 回避の窓
   }
 
   m.result = { text: ch.react, dAff, dMental, type: ch.type };
   if (ch.type === 'jirai') State.night.jiraiCount = (State.night.jiraiCount || 0) + 1;
-  m.phase = 'react';
-  render();
-};
-
-G.nadameru = function(){
-  const m = State.night.current;
-  const c = CONFIG.serve.nadameru;
-  AudioCtl.playSe('bonda');   // なだめるも .choice なので、鳴らさないと無音になる
-  custState(m).affection = clampAff(custState(m).affection + c.affection);
-  State.mental = clampMental(State.mental + c.mental);
-  m.tension = 0;               // なだめて機嫌〈普〉＝テンション0へ
-  m.nadameruWindow = false;
-  m.rallies++;
-  m.result = { text: m.cust.nadameruText, dAff: c.affection, dMental: c.mental, type: 'nadameru' };
   m.phase = 'react';
   render();
 };
@@ -1720,6 +1722,20 @@ function biyouSchedule(){
 
 function enterDay(){
   saveGame();   // 毎朝オートセーブ（中断してもこの日の朝から再開できる）
+  // 暴飲暴食（昨夜の閉店後の話なので、朝いちばん・他のイベントより先に置く）
+  const bg = CONFIG.binge;
+  if (State.mental < bg.line
+      && State.day - (State.lastBinge || -99) >= bg.cooldownDays
+      && rnd() < bg.chance) {
+    State.lastBinge = State.day;
+    State.money -= bg.cost;
+    State.mental = clampMental(State.mental + bg.mental);
+    State.bingeIdx = Math.floor(rnd() * DATA.bingeScenes.length);
+    State.bingeScene = DATA.bingeScenes[State.bingeIdx];
+    State.screen = 'binge';
+    render();
+    return;
+  }
   const ev = pendingUniEvent();
   if (ev) {
     State.uniEvent = ev;
@@ -1760,19 +1776,6 @@ function enterDay(){
     State.money -= CONFIG.tobi.amount;
     State.mental = clampMental(State.mental + CONFIG.tobi.mental);
     State.screen = 'tobi';
-    render();
-    return;
-  }
-  // 暴飲暴食（メンタルが低い朝、ストレスが財布を開けることがある）
-  const bg = CONFIG.binge;
-  if (State.mental < bg.line
-      && State.day - (State.lastBinge || -99) >= bg.cooldownDays
-      && rnd() < bg.chance) {
-    State.lastBinge = State.day;
-    State.money -= bg.cost;
-    State.mental = clampMental(State.mental + bg.mental);
-    State.bingeScene = DATA.bingeScenes[Math.floor(rnd() * DATA.bingeScenes.length)];
-    State.screen = 'binge';
     render();
     return;
   }
@@ -1957,7 +1960,7 @@ G.endLiving = function(){ enterDay(); };
 G.endBiyou = function(){ enterDay(); };
 G.endBinge = function(){ enterDay(); };
 G.endTobi = function(){ enterDay(); };
-G.endPuchi = function(){ enterDay(); };
+G.endPuchi = function(){ if (State.puchiNext === 'night') { State.puchiNext = null; startNight(); } else enterDay(); };
 
 // 推し活の臨時出費：0=買う / 1=我慢
 G.oshiChoice = function(i){
@@ -2180,7 +2183,7 @@ function renderSeikeiClinic(){
 function menuOptionDesc(o){
   const p = [o.cost ? yen(o.cost) : '無料'];
   if (o.taikei) p.push(`体型 +${o.taikei}`);
-  if (o.roll) p.push(`体力上限 ${o.roll.map(([g, pr]) => `+${g}=${Math.round(pr * 100)}%`).join('/')}`);
+  if (o.roll) { const gs = o.roll.map(([g]) => g); p.push(`体力上限 ${Math.min(...gs)}〜${Math.max(...gs)}アップ`); }
   if (o.intel) p.push(`知性 +${o.intel}`);
   if (o.talk) p.push(`トーク +${o.talk}`);
   if (o.mental) p.push(`メンタル ${o.mental > 0 ? '+' : ''}${o.mental}`);
@@ -2414,7 +2417,10 @@ function renderMission(){
   const mi = State.mission;
   const cust = CUSTOMERS[mi.custId];
   const d = mi.data;
-  const head = `<h2>📞 ${esc(d.title)}</h2>${sceneBanner('mission_call')}<p class="cust-intro">${esc(cust.name)}からの頼まれごと</p>`;
+  // 自室で電話を受ける絵は「電話がかかってきた場面」だけ。現地の場面（会議室・ディーラー等）に
+  // 自室の写真を出さない（該当する一枚絵が無いので、現地はバナー無し）
+  const onPhone = State.missionPhase === 'offer' || State.missionPhase === 'declined';
+  const head = `<h2>📞 ${esc(d.title)}</h2>${onPhone ? sceneBanner('mission_call') : ''}<p class="cust-intro">${esc(cust.name)}からの頼まれごと</p>`;
   if (State.missionPhase === 'offer') {
     $screen().innerHTML = `${head}
       <div class="story-box">${para(d.call)}</div>
@@ -2443,7 +2449,7 @@ function renderMission(){
 function renderScold(){
   $screen().innerHTML = `
     <h2>😤 閉店後の呼び出し</h2>
-    ${sceneBanner('scold')}
+    ${sceneBanner('mensetsu')}
     <div class="story-box bad">${para(DATA.scoldScene)}</div>
     <div class="note-box"><p>・メンタル ${CONFIG.scold.mental}／体力 ${CONFIG.scold.stamina}</p><p>・明日はフリーの卓を1つ外される</p></div>
     <button class="btn btn-primary" onclick="G.endScold()">……頭、冷やします</button>`;
@@ -2490,7 +2496,7 @@ function renderNagashiScold(){
   const ng = CONFIG.nagashi;
   $screen().innerHTML = `
     <h2>😤 閉店後の呼び出し</h2>
-    ${sceneBanner('scold')}
+    ${sceneBanner('mensetsu')}
     <div class="story-box bad">${para(DATA.nagashiScoldScene)}</div>
     <div class="note-box"><p>・店長の信頼 ${ng.scoldTrust}（いま ${State.trust}）／メンタル ${ng.scoldMental}</p></div>
     <button class="btn btn-primary" onclick="G.endNagashiScold()">……すみません</button>`;
@@ -2517,7 +2523,7 @@ function renderPuchi(){
     ${ev.bg ? `<div class="scene-visual"><img src="images/${ev.bg}.webp" alt="" onerror="this.parentElement.style.display='none'"></div>` : ''}
     <div class="story-box">${para(ev.text)}</div>
     ${eff.length ? `<div class="note-box"><p>・${eff.join('／')}</p></div>` : ''}
-    <button class="btn btn-primary" onclick="G.endPuchi()">今日も始まる</button>`;
+    <button class="btn btn-primary" onclick="G.endPuchi()">${State.puchiNext === 'night' ? '店に向かう' : '今日も始まる'}</button>`;
 }
 
 function renderAfter(){
@@ -2555,7 +2561,7 @@ function renderTobi(){
 function renderBinge(){
   $screen().innerHTML = `
     <h2>🍜 ストレスの請求書</h2>
-    ${sceneBanner('binge')}
+    ${sceneBanner(State.bingeIdx === 1 ? 'yakiniku' : 'binge')}
     <div class="story-box">${para(State.bingeScene)}</div>
     <div class="note-box"><p>・暴飲暴食 -${yen(CONFIG.binge.cost)}／メンタル +${CONFIG.binge.mental}</p><p>・残高 ${yen(State.money)}</p></div>
     <button class="btn btn-primary" onclick="G.endBinge()">……明日から本気出す</button>`;
@@ -2644,6 +2650,7 @@ function renderWarukuchi(){
   const mv = w.mental ?? CONFIG.warukuchi.mental;
   $screen().innerHTML = `
     <h2>🚬 閉店後・控え室</h2>
+    ${sceneBanner('mensetsu')}
     <div class="story-box ${mv > 0 ? 'ok' : 'bad'}">${para(w.text)}</div>
     <div class="note-box">
       <p>・メンタル ${mv > 0 ? '+' + mv : mv}</p>
@@ -2900,19 +2907,17 @@ function renderMain(){
     const mark = i => State.stats.intel >= CONFIG.intel.jiraiMarkLine && m.effChoices[i].type === 'jirai' ? ' <span class="jirai-mark">⚠</span>' : '';
     const choices = m.choiceOrder.map((idx, oi) =>
       `<button class="choice choice-answer" onclick="G.pickChoice(${oi})">${esc(m.effChoices[idx].text)}${mark(idx)}</button>`).join('');
-    const nadameru = m.nadameruWindow
-      ? `<button class="choice choice-answer choice-nadameru" onclick="G.nadameru()">〈必死になだめる〉（好感度${CONFIG.serve.nadameru.affection}・メンタル${CONFIG.serve.nadameru.mental}）</button>` : '';
     $screen().innerHTML = `${header}
       ${typeHint}
       <div class="story-box cust-line">${para(turnLine(m))}</div>
       ${moodRead}${kenCue}${mindHint}
-      <div class="choices">${nadameru}${choices}</div>`;
+      <div class="choices">${choices}</div>`;
     return;
   }
 
   if (m.phase === 'react') {
     const r = m.result;
-    const cls = { seikai:'ok', bonda:'', hazure:'bad', jirai:'bad', nadameru:'', explosion:'bad' }[r.type] || '';
+    const cls = { seikai:'ok', bonda:'', hazure:'bad', jirai:'bad', explosion:'bad' }[r.type] || '';
     // 出禁になった夜だけは、数字を見せない（もう数字の話ではない）
     // 出禁の夜は数字を見せない（もう数字の話ではない）。ただし出禁になった事実だけは一行で残す
     const delta = (r.type === 'explosion' && m.banned)
@@ -2979,7 +2984,7 @@ function renderMain(){
 
   if (m.phase === 'onedari') {
     const body = m.encore
-      ? `<p>1本目が、まだ半分残っている。……でも、この人の機嫌はまだ上を向いている。</p>
+      ? `<p>1本目が空いた。……この人の機嫌は、まだ上を向いている。追加注文のチャンスだ。</p>
          <p class="onedari-note">（正解を続けて開いた"2本目の窓"。欲を出すか、きれいに終わるか）</p>`
       : `<p>……今、いける気がする？　それとも、まだ？</p>
          <p class="onedari-note">（高いものほど、首を縦に振ってもらえない。この卓はあと${Math.max(0, CONFIG.serve.jonaiRallies - m.turn - 1)}ラリーで終わり・待ちすぎたら今夜はゼロ）</p>`;

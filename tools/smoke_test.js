@@ -105,7 +105,7 @@ function playthrough(name, policy, quiet) {
   State.screen = 'dayResult';
 
   let guard = 0;
-  const log = { explosions: 0, sales: 0, nadameru: 0, forcedRests: 0, jonai: 0, chenji: 0, soutai: 0, sick: 0, weird: 0, seikei: 0, uniEvents: 0 };
+  const log = { explosions: 0, sales: 0, forcedRests: 0, jonai: 0, chenji: 0, soutai: 0, sick: 0, weird: 0, seikei: 0, uniEvents: 0 };
 
   while (State.screen !== 'ending') {
     if (++guard > 60000) throw new Error(`${name}: 無限ループ検出 screen=${State.screen}`);
@@ -232,12 +232,9 @@ function playthrough(name, policy, quiet) {
         if (m.phase === 'honshimeiCall') { log.shimeiCall = (log.shimeiCall || 0) + 1; G.afterHonshimeiCall(); }
         else if (m.phase === 'mainIntro') { checkUnits(name, State, m, log); G.startMainTalk(); }
         else if (m.phase === 'turn') {
-          if (m.nadameruWindow && policy.useNadameru) { log.nadameru++; G.nadameru(); }
-          else {
-            const wantIdx = policy.choose(m.effChoices, State, m);
-            if (wantIdx < 0 || wantIdx >= m.effChoices.length) throw new Error(`${name}: 選択肢index不正 ${wantIdx}`);
-            G.pickChoice(m.choiceOrder.indexOf(wantIdx));
-          }
+          const wantIdx = policy.choose(m.effChoices, State, m);
+          if (wantIdx < 0 || wantIdx >= m.effChoices.length) throw new Error(`${name}: 選択肢index不正 ${wantIdx}`);
+          G.pickChoice(m.choiceOrder.indexOf(wantIdx));
         }
         else if (m.phase === 'react') {
           if (m.result.type === 'explosion') log.explosions++;
@@ -365,14 +362,10 @@ const cheapDrink = () => 0;
 const stdOnedari = (S, m) => aff(S, m) >= 85 || (m.turn + 1 === 5 && aff(S, m) >= 72);
 
 // 1) 最適プレイ: 全卓で正解を刺し続ける。
-//    なだめるは無料の回復手段なので、完璧な打ち手なら当然使う。
-//    ここを使わない設定にしていた頃は「全問正解なのに出禁」が 24回中2回起きていて、
-//    好感度の天井を入れてゲームが長くなったら 6回中1回まで増えた。
-//    縛りプレイの結果でテストを落としても仕方がないので、最適プレイは最適に打たせ、
-//    崩壊ルートは下の「なだめない縛り」で別に踏む。
+//    （〈必死になだめる〉は 2026-08-10 に廃止。回避の窓は存在しない）
 const bestRun = playthrough('最適プレイ　　', {
   dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
-  choose: best, onedari: stdOnedari, useNadameru: true,
+  choose: best, onedari: stdOnedari,
 });
 if (bestRun.bans.length) throw new Error('最適プレイで出禁が出た');
 if (bestRun.log.jonai === 0) throw new Error('最適プレイで場内指名が一度も付かなかった');
@@ -382,22 +375,22 @@ if (bestRun.fired) throw new Error('最適プレイでクビになった');
 // 一度も発火しない判定だったので、本来の不変条件＝留年判定そのものを見る
 if (bestRun.State.uniWarned.ryunen) throw new Error('大学に通ったのに留年した');
 
-// 1.2) なだめない縛り: 正解は刺すが、心が折れても回復しない。
+// 1.2) 崩壊ルート検証: 正解は刺すが、メンタルの崩壊が起きても構わず回す。
 //      brokenLine を踏んで選択肢が壊れ、爆発・出禁まで行くルートを毎回踏ませる。
 //      ここは出禁が出てよい（出ないほうがおかしい）。クラッシュしないことだけを見る。
-const noNadame = playthrough('なだめない縛り', {
+const noNadame = playthrough('崩壊ルート検証', {
   dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
-  choose: best, onedari: stdOnedari, useNadameru: false,
+  choose: best, onedari: stdOnedari,
 });
 if (noNadame.log.explosions === 0 && noNadame.bans.length === 0) {
-  console.log('  ⚠ なだめない縛りで一度も爆発しなかった（メンタル崩壊ルートが踏まれていない）');
+  console.log('  ⚠ 崩壊ルート検証で一度も爆発しなかった（メンタル崩壊ルートが踏まれていない）');
 }
 
 // 1.5) 大学サボりプレイ（中級の腕）: 警告2回→3/1に留年確定・学費-100万を背負って続行→届かないはず
 const saboru = playthrough('大学サボり　　', {
   dayCmd: noUniDay, menuPick: smartMenu, nagashi: smartNagashi,
   choose: (cs) => Math.random() < 0.6 ? best(cs) : coastPick(cs),
-  onedari: stdOnedari, useNadameru: true,
+  onedari: stdOnedari,
 });
 if (!saboru.State.uniWarned.ryunen) throw new Error('大学をサボり切ったのに留年判定が出なかった');
 if (saboru.log.uniEvents < 3) throw new Error(`警告の階段が踏まれていない（イベント${saboru.log.uniEvents}回）`);
@@ -406,7 +399,7 @@ if (saboru.log.uniEvents < 3) throw new Error(`警告の階段が踏まれてい
 playthrough('トリアージ　　', {
   dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
   choose: (cs, S, m) => m.cust.id === 'ishi' ? best(cs) : coastPick(cs),
-  onedari: stdOnedari, useNadameru: true,
+  onedari: stdOnedari,
 });
 
 // 2.3) 2周目プレイ：fromRun で2周目からしか来ない客（常連・ハシヅメ）を踏む。
@@ -415,7 +408,7 @@ playthrough('トリアージ　　', {
   const r = playthrough('2周目　　　　', {
     dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
     choose: (cs) => Math.random() < 0.6 ? best(cs) : coastPick(cs),
-    onedari: stdOnedari, useNadameru: true, runNo: 2,
+    onedari: stdOnedari, runNo: 2,
   });
   const g = r.State.cust.gachikoi;
   if (!g || g.visits === 0) throw new Error('2周目なのに、2周目からの客（gachikoi）が一度も来なかった');
@@ -427,7 +420,7 @@ playthrough('トリアージ　　', {
 {
   const r = playthrough('x', {
     dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
-    choose: best, onedari: stdOnedari, useNadameru: true,
+    choose: best, onedari: stdOnedari,
   }, true);
   if (r.State.cust.gachikoi.visits > 0) throw new Error('1周目なのに2周目の客が来た（fromRun が効いていない）');
 }
@@ -441,7 +434,7 @@ playthrough('トリアージ　　', {
   const real = Math.random;
   Math.random = () => 0.42;          // newSeed() を固定する＝同じ種で始める
   const p = { dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
-    choose: best, onedari: stdOnedari, useNadameru: true };
+    choose: best, onedari: stdOnedari };
   const a = playthrough('x', p, true), b = playthrough('x', p, true);
   Math.random = real;
   const key = (r) => `${r.State.day}/${r.State.money}/${r.log.sales}/${r.log.explosions}/${r.log.sick}/${r.log.seikei}/${r.bans.join(',')}`;
@@ -473,7 +466,7 @@ playthrough('トリアージ　　', {
   const med = (a) => { a.sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
   const runN = (drinkPick) => med([...Array(5)].map(() => playthrough('x', {
     dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
-    choose: best, onedari: stdOnedari, useNadameru: true, drinkPick,
+    choose: best, onedari: stdOnedari, drinkPick,
   }, true).State.day));
   const omni = runN(undefined);               // 既定＝通る中で一番高いものを選ぶ全知の打ち手
   const cheap = runN(priceOnly);
@@ -492,7 +485,7 @@ for (let i = 0; i < 5; i++) {
   const r = playthrough(`中級プレイ${i + 1}　　`, {
     dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
     choose: (cs) => Math.random() < 0.6 ? best(cs) : coastPick(cs),
-    onedari: stdOnedari, useNadameru: true,
+    onedari: stdOnedari,
   });
   if (r.win) { midWins++; midDays.push(r.State.day); }
   // 想定プレイでの会話の被りはゼロが要件。
@@ -513,7 +506,7 @@ const invest = playthrough('自己投資プレイ', {
     : (S.stats.looks < 60 && S.money >= 90000) ? 'seikei'
     : S.money >= 2000 ? 'dokusho' : 'shumi',
   menuPick: smartMenu,
-  choose: best, onedari: stdOnedari, useNadameru: true,
+  choose: best, onedari: stdOnedari,
 });
 if (invest.State.stats.looks <= 20) throw new Error('自己投資したのに容姿が育っていない');
 if (invest.State.parts.taikei <= 20) throw new Error('筋トレしたのに体型が育っていない');
@@ -522,7 +515,7 @@ if (invest.State.staminaMax <= 100) throw new Error('筋トレしたのに体力
 // 5) 凡打だけプレイ: 場内は一度も付かないはず
 const coast = playthrough('凡打オンリー　', {
   dayCmd: (S) => S.stamina < 45 ? 'rest' : 'shumi', menuPick: smartMenu,
-  choose: coastPick, onedari: () => false, useNadameru: false,
+  choose: coastPick, onedari: () => false,
 });
 if (coast.log.jonai !== 0) throw new Error('凡打だけで場内指名が付いた');
 if (coast.win) throw new Error('凡打だけで勝ててしまった');
@@ -531,26 +524,15 @@ if (coast.win) throw new Error('凡打だけで勝ててしまった');
 const bomb = playthrough('地雷プレイ　　', {
   dayCmd: (S) => S.stamina < 45 ? 'rest' : 'shumi', menuPick: smartMenu,
   choose: pickPref('jirai', 'hazure', 'bonda', 'seikai'),
-  onedari: () => false, useNadameru: false,
+  onedari: () => false,
 });
 if (bomb.log.explosions === 0) throw new Error('地雷を踏み続けたのに一度も爆発しなかった');
 if (bomb.win) throw new Error('地雷プレイで勝ててしまった');
 
-// 7) なだめプレイ: T2で地雷 → 次ターンに〈なだめる〉が出るはず
-const calm = playthrough('なだめプレイ　', {
-  dayCmd: smartDay, menuPick: smartMenu,
-  choose: (cs, S, m) => {
-    const j = cs.findIndex(c => c.type === 'jirai');
-    return ((m.turn === 0 || m.turn === 1) && m.stage === 'first' && j >= 0) ? j : best(cs);
-  },
-  onedari: () => false, useNadameru: true,
-});
-if (calm.log.nadameru === 0) throw new Error('なだめるが一度も発動しなかった');
-
 // 8) 体力無視プレイ: 休まない → 欠勤/病気/早退が出るはず
 const burnout = playthrough('体力無視　　　', {
   dayCmd: () => 'kintore',
-  choose: best, onedari: () => false, useNadameru: false,
+  choose: best, onedari: () => false,
 });
 if (burnout.log.soutai + burnout.log.forcedRests + burnout.log.sick === 0) throw new Error('体力を回復しないのに早退も欠勤も病気も出なかった');
 if (burnout.win) throw new Error('体力無視で勝ててしまった');
@@ -559,7 +541,7 @@ if (burnout.win) throw new Error('体力無視で勝ててしまった');
 const nagashiOnly = playthrough('流しオンリー　', {
   dayCmd: (S) => uniPlan(S) || (S.mental < 40 ? 'shumi' : 'rest'),
   menuPick: smartMenu,
-  choose: best, onedari: () => false, useNadameru: false,
+  choose: best, onedari: () => false,
   nagashi: () => true,
 });
 if (nagashiOnly.win) throw new Error('流し出勤だけで勝ててしまった（本気営業の意味がなくなる）');
@@ -575,7 +557,7 @@ const oops = playthrough('一発やらかし　', {
     }
     return best(cs);
   },
-  onedari: () => false, useNadameru: false,
+  onedari: () => false,
 });
 if (oops.log.weird === 0) throw new Error('信頼が下がったのに変な客が一度も回されなかった');
 
@@ -634,7 +616,7 @@ console.log('[ランダム×20 ] クラッシュなし');
 // 上手いプレイを厚めに回して、第2話まで到達するかを見る
 for (let i = 0; i < 12; i++) playthrough(`到達計測${i}`, {
   dayCmd: smartDay, menuPick: smartMenu, nagashi: smartNagashi,
-  choose: best, onedari: stdOnedari, useNadameru: true,
+  choose: best, onedari: stdOnedari,
 }, true);
 
 // 11) 会話ユニットの到達性：書いたのに一度も出ないユニットがあれば設計ミス

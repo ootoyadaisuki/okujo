@@ -243,8 +243,8 @@ h2 { font-size: 18px; margin: 16px 0 8px; }
   cursor: pointer;
   line-height: 1.6;
 }
-.choice:hover { border-color: var(--pink); }
-.choice-nadameru { border-color: var(--gold); color: var(--gold); }
+/* スマホは最後にタップしたボタンに hover が残留して「意味ありげな枠」に見えるので、マウス環境限定にする */
+@media (hover: hover) { .choice:hover { border-color: var(--pink); } }
 
 /* おねだりの銘柄ボタン：名前は左、値段は右。値段で迷わせるのが狙いなので等幅で揃える */
 .onedari-drink { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
