@@ -82,6 +82,20 @@ function rnd(){
   t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
+
+// 一様なシャッフル（Fisher–Yates）。
+// もとは sort(() => rnd() - 0.5) だった。比較関数に乱数を返す実装は分布が偏り、
+// 4要素だと元の0番目が先頭2枠に来る確率が各28%、末尾には19%しか来ない。
+// 原稿では正解が[0]・ハズレが[2]に寄っているので、その偏りがそのまま
+// 「上のほうを選べば当たる／一番下は外れ」というテルになって漏れていた。
+function shuffled(arr){
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 function newSeed(){ return (Math.random() * 4294967296) >>> 0; }
 
 // ---------------------------------------------------------------------
@@ -371,8 +385,11 @@ G.pickDay = function(id){
     State.uniIdx++;
     if (rnd() < CONFIG.uni.buzz.chance) State.uniBuzz = true;  // 講義ネタは夜の卓で光ることがある
     // キャンパスの出来事（噂は階段式に進む。ある日、学校中に知れ渡る）
+    // ※1段目「垢抜けすぎ」は容姿の変化ありきの噂なので、整形・筋トレで
+    //   実際に容姿（6パーツ平均・初期値20）が上がっていないうちは発火させない
     const uev = CONFIG.uni.event;
-    if (State.uniRumor < DATA.uniRumorEvents.length && rnd() < uev.rumorChance) {
+    const rumorReady = State.uniRumor > 0 || State.stats.looks > CONFIG.parts.start;
+    if (rumorReady && State.uniRumor < DATA.uniRumorEvents.length && rnd() < uev.rumorChance) {
       const ev = DATA.uniRumorEvents[State.uniRumor++];
       story += '\n\n' + ev.text;
       applyUniEvent(ev, notes);
@@ -833,7 +850,7 @@ function drawTable(weird){
       // モブ卓だけだと、最初の2日に一度も心が削れないまま本番へ出ることになる
       : tut ? [...DATA.lightTables, ...(DATA.mobTables || [])]
       : [...DATA.lightTables, ...(DATA.mobTables || [])];
-    State[dk] = pool.slice().sort(() => rnd() - 0.5);
+    State[dk] = shuffled(pool);
     State[pk] = 0;
   }
   // 出せない卓（女性客が早すぎる／同じ顔が続く）は飛ばして次を引く
@@ -889,7 +906,7 @@ function nextTable(){
       picked: null,
       totalDrinks: 0,
       totalBack: 0,
-      order: [...Array(table.rallies[0].choices.length).keys()].sort(() => rnd() - 0.5),
+      order: shuffled([...Array(table.rallies[0].choices.length).keys()]),
       notice: weird && !n.weirdNoticeShown,
       mobAff: CONFIG.mobAff.start,
       topicId: null,
@@ -903,8 +920,13 @@ function nextTable(){
     const mobTopic = DATA.mobTopicAffinity[table.img];
     const reservedByMain = mobTopic && n.plan.slice(n.step).some(k =>
       k.startsWith('main:') && CUSTOMERS[k.split(':')[1]].topicAffinity === mobTopic);
+    // ※種は「消費しない」。以前はここで delete していたが、モブ卓の見返りである
+    //   mobAff は画面に出るだけのメーターで、金にも信頼にも再来店にも繋がっていない。
+    //   つまり 1,200〜1,800円＋昼枠1 で買った種が、飾りに変換されて消えていた。
+    //   しかも12種のimgのうち11種が種を食べるので、その種を好むVIPが今夜来ない限り
+    //   ほぼ確実にモブが先に食べる＝有料の趣味が全部「配信の下位互換」に落ちていた。
+    //   いまは話題として場は動くが、種は本命のために残る
     if (!weird && mobTopic && !reservedByMain && State.topics[mobTopic]) {
-      delete State.topics[mobTopic];
       n.current.topicId = mobTopic;
       n.current.mobAff = clampAff(n.current.mobAff + CONFIG.topic.affection);
     }
@@ -993,13 +1015,18 @@ G.pickLight = function(orderIdx){
       : ch.drinks >= 2 ? 'seikai'
       : ch.drinks === 1 ? 'bonda' : 'hazure');
   if (ch.flag === 'tobi') State.tobiDay = State.day + CONFIG.tobi.delayDays;  // 売掛を通してしまった
-  const amount = ch.drinks * CONFIG.pay.drinkBack * (State.night.drinkMult || 1);
+  // ドリンクは「正解」でしか入らない。凡打（drinks 1）は場を持たせただけで、
+  // グラスは空かない＝0杯。以前は凡打でも1杯入っていたので、
+  // 適当に流しても金になり、卓に当たり外れの手応えが無かった
+  const paid = ch.drinks >= 2 ? ch.drinks : 0;
+  const amount = paid * CONFIG.pay.drinkBack * (State.night.drinkMult || 1);
+  cur.paidDrinks = paid;
   cur.amount = amount;
-  cur.totalDrinks += ch.drinks;
+  cur.totalDrinks += paid;
   cur.totalBack += amount;
   if (amount > 0) State.night.earned += amount;
   State.mental = clampMental(State.mental + ch.mental);
-  cur.affDelta = ch.drinks * CONFIG.mobAff.perDrink;
+  cur.affDelta = paid * CONFIG.mobAff.perDrink;
   cur.mobAff = clampAff(cur.mobAff + cur.affDelta);
   // モブ卓の気まぐれ注文（最終ラリーまで盛り上げた卓なら、たまに追加注文が入る）
   cur.bonus = null;
@@ -1037,7 +1064,7 @@ G.lightNext = function(){
     cur.rally++;
     cur.picked = null;
     cur.phase = 'pick';
-    cur.order = [...Array(cur.table.rallies[cur.rally].choices.length).keys()].sort(() => rnd() - 0.5);
+    cur.order = shuffled([...Array(cur.table.rallies[cur.rally].choices.length).keys()]);
     render();
     return;
   }
@@ -1094,7 +1121,7 @@ function buildChoices(m){
 function shuffleChoices(){
   const m = State.night.current;
   buildChoices(m);
-  m.choiceOrder = [...Array(m.effChoices.length).keys()].sort(() => rnd() - 0.5);
+  m.choiceOrder = shuffled([...Array(m.effChoices.length).keys()]);
 }
 
 function affGain(type, rally){
@@ -1818,8 +1845,13 @@ function enterDay(){
   // プチイベント（10日に1回くらいの小さな日常）
   // 昨夜の過ごし方に合うものだけを、上から順に消化する
   //   出勤した朝＝店・客・帰り道の話／休んだ朝＝部屋にいた人間の話（通販・投げ銭など）
+  // 暴飲暴食とプチイベントは、どちらも「昨夜どう過ごしたか」を朝に振り返る話。
+  // 同じ朝に両方出すと「閉店後の話」を二連発で聞かされる形になり、
+  // 雨の夜（＝仕事の話）が暴飲暴食の直後に出ると「店に戻された」ように読めてしまう。
+  // 今日すでに暴飲暴食が出た朝は、プチイベントの枠を空ける
   const pz = CONFIG.puchi;
-  if (State.day - (State.lastPuchi || 0) >= pz.minGap && rnd() < pz.chance) {
+  if (State.lastBinge !== State.day
+      && State.day - (State.lastPuchi || 0) >= pz.minGap && rnd() < pz.chance) {
     const mode = State.workedYesterday ? 'work' : 'off';
     const idx = DATA.puchiEvents.findIndex((e, i) =>
       !State.puchiUsed[i] && (!e.when || e.when === mode));
@@ -2110,12 +2142,13 @@ function dayWarnings(){
     } else if (inWinterBreak(State.day)) {
       w.push(`大学は冬休み（1/7に再開）。出席 ${State.uniAttended}/${u.need}`);
     } else if (isWeekend(State.day)) {
-      w.push(`今日は${weekdayName(State.day)}曜・大学は休講。出席 ${State.uniAttended}/${u.need}（残りチャンス${left}日）`);
+      // 曜日は画面上部の日付表示に既に出ているので、ここでは繰り返さない
+      w.push(`大学は休講。出席 ${State.uniAttended}/${u.need}（残りチャンス${left}日）`);
     } else {
       w.push(`大学の出席 ${State.uniAttended}/${u.need}（1月末までに${u.need}回で進級・残りチャンス${left}日。留年＝学費¥1,000,000が自腹）`);
     }
   }
-  if (isSunday(State.day)) w.push('今日は日曜。お店は休みで、出勤できない（夜は、街へ出る日）');
+  if (isSunday(State.day)) w.push('お店は休みで、出勤できない（夜は、街へ出る日）');
   const nextLiving = CONFIG.living.days.find(d => d > State.day);
   if (nextLiving && nextLiving - State.day <= 5) w.push(`${dateLabel(nextLiving)} に家賃・生活費 ¥${CONFIG.living.cost.toLocaleString()} の引き落としがある`);
   if (State.trust <= CONFIG.trust.firedLine) w.push('店長の信頼が底をついている。……今夜、呼び出されるかもしれない。');
@@ -2218,7 +2251,7 @@ function renderMenu(){
 function workButtons(){
   // 日曜は店が閉まっている。稼げないかわりに、街へ出る夜がある
   if (isSunday(State.day)) {
-    return `<div class="hint-box">日曜日。お店はお休み。……夜が、まるまる空いている。</div>
+    return `<div class="hint-box">日曜日。お店はお休み。……夜が、まるまる空いている。<br><br>→ さて、次は何をしよう？</div>
       <button class="btn btn-primary" onclick="G.toSunday()">🚶 ひとりで街へ出かける</button>`;
   }
   if (State.trust <= CONFIG.trust.firedLine) {
@@ -2804,7 +2837,7 @@ function renderLight(){
       ${mobImg}
       <div class="story-box">${para(cur.picked.react)}</div>
       ${bonusBox}
-      <div class="note-box"><p>・ドリンク${cur.picked.drinks}杯 バック +${yen(cur.amount)}／好感度 +${cur.affDelta}／メンタル ${cur.picked.mental}</p></div>
+      <div class="note-box"><p>・ドリンク${cur.paidDrinks}杯 バック +${yen(cur.amount)}／好感度 +${cur.affDelta}／メンタル ${cur.picked.mental}</p></div>
       <button class="btn btn-primary" onclick="G.lightNext()">${isLast ? '次の卓へ' : '次へ'}</button>`;
   }
 }
