@@ -179,6 +179,7 @@ G.continueGame = function(){
   if (State.sunday === undefined) State.sunday = null;
   if (State.workNo == null) State.workNo = 0;
   if (!State.mobImgLog) State.mobImgLog = {};
+  if (!State.mobSeen) State.mobSeen = {};   // 一見の客に何回会ったか（再来店の卓の出現条件）
   if (State.lastWarukuchi == null) State.lastWarukuchi = -99;
   if (typeof State.seed !== 'number') State.seed = newSeed();   // 乱数の種を持たない旧セーブ
   for (const id of Object.keys(CUSTOMERS)) {
@@ -240,7 +241,7 @@ G.newGame = function(){
     nagashiStreak: 0, lastNagashiDay: -9,        // 流しの連投を店長が見ている
     seikeiCount: 0, busuSeen: false, seikeiNight: -99,  // 12/27の初ダメ出し判定／整形した営業日
     sundayIdx: 0, sunday: null,                  // 日曜（店休）の街歩き
-    workNo: 0, mobImgLog: {},                    // 営業日の通し番号／モブ画像を最後に出した営業日
+    workNo: 0, mobImgLog: {}, mobSeen: {},       // 営業日の通し番号／モブ画像を最後に出した営業日／一見の客に会った回数
     lastWarukuchi: -99,                          // 同僚の陰口を最後に聞いた日
     benchNext: false,
     kintoreBuzz: false,
@@ -609,6 +610,14 @@ function custActive(id){
   return !cs.banned && State.day >= (c.fromDay || 1) && !spotGraduated(id);
 }
 
+// 出禁になった客。もう卓には着かないが、ローテーションの席だけは残る（pickMains 参照）。
+// スポット卒業（話し切って自然に来なくなった客）は席ごと畳む。
+// 席を残すのは「本来なら来ていたはずの夜」を守るためで、卒業した客にその夜は無いため
+function custGhost(id){
+  const c = CUSTOMERS[id], cs = State.cust[id];
+  return cs.banned && runNo() >= (c.fromRun || 1) && State.day >= (c.fromDay || 1);
+}
+
 // 研修期間：最初の2日は先輩のヘルプ。モブ卓だけを回され、場内指名も起きない
 function inTutorial(){ return State.day <= CONFIG.tutorial.helpDays; }
 
@@ -712,6 +721,11 @@ function pickMains(){
   // 新しい話が尽きたら、来店が古い客から再登場（再演可能なユニットだけが回る）
   if (cands.length === 0) cands = Object.keys(CUSTOMERS).filter(id =>
     custActive(id) && pickUnit(CUSTOMERS[id], 'first', State.cust[id]));
+  // 出禁になった客も、ローテーションの席だけは残す（ghost）。
+  // 席ごと消すと、その夜が残りの客に回って話が前倒しで消費され、終盤のネタ切れが早まる。
+  // ghost の順番が来た夜は、指名卓ではなくフリーの卓になる
+  //   ＝「その人が来るはずだった日は、VIPが誰も来ない日」。これはむしろ自然な夜でもある
+  cands = cands.concat(Object.keys(CUSTOMERS).filter(id => custGhost(id)));
   cands.sort((a, b) => (State.cust[a].lastVisit || 0) - (State.cust[b].lastVisit || 0));
   // 卓が重なる夜は体力を要求する。体力が残っていなければ、店長も無理には入れない
   let quota = mainsQuotaOf(State.day);
@@ -720,7 +734,15 @@ function pickMains(){
   // 痛客は罰ではなく、夜の普通の一部。フリーの卓のひとつが、たまにそれになる
   const wg = CONFIG.weirdGuest;
   const weird = (State.day >= wg.fromDay && rnd() < wg.chance) ? 1 : 0;
-  return { mains: cands.slice(0, quota), weird, punish: false };
+  const picked = cands.slice(0, quota);
+  // ghost の席は今夜ぶんを消化したことにする（＝次はまた後ろへ回る）。
+  // ここを更新しないと lastVisit が0のまま最古になり、毎晩その席が当たり続ける
+  picked.filter(custGhost).forEach(id => { State.cust[id].lastVisit = State.day; });
+  // 席が回ってきても、来ない夜がある。落とした席はフリーの卓になる。
+  // lastVisit を更新しないので、来なかった客は明日また列の先頭に戻る（＝順番は飛ばない）
+  const show = CONFIG.vipShowRate != null ? CONFIG.vipShowRate : 1;
+  const mains = picked.filter(id => !custGhost(id) && rnd() < show);
+  return { mains, weird, punish: false };
 }
 
 function startNight(){
@@ -840,6 +862,17 @@ function noteMobImg(img){
   State.mobImgLog[img] = State.workNo || 0;
 }
 
+// 一見の客の見分け方。絵を持つ客は絵で、持たない客は名前で数える
+// （同じ絵＝同じ人。再来店の卓はこのキーで初対面と紐づく）
+function mobKey(t){ return t.img || ('name:' + t.name); }
+
+// 「この人に何回会ったか」を記録する。再来店の卓（visit:2）の出現条件になる
+function noteMobSeen(t){
+  State.mobSeen = State.mobSeen || {};
+  const k = mobKey(t);
+  State.mobSeen[k] = Math.max(State.mobSeen[k] || 0, t.visit || 1);
+}
+
 function drawTable(weird){
   const tut = !weird && inTutorial();
   const dk = weird ? 'weirdDeck' : (tut ? 'mobDeck' : 'lightDeck');
@@ -848,25 +881,42 @@ function drawTable(weird){
     const pool = weird ? DATA.weirdTables
       // 研修（Day1-2）もヘルプ卓を混ぜる。
       // モブ卓だけだと、最初の2日に一度も心が削れないまま本番へ出ることになる
+      // 研修中は再来店（mobTables2）を混ぜない。Day1-2に「また来ました」は成立しないため
       : tut ? [...DATA.lightTables, ...(DATA.mobTables || [])]
-      : [...DATA.lightTables, ...(DATA.mobTables || [])];
+      : [...DATA.lightTables, ...(DATA.mobTables || []), ...(DATA.mobTables2 || [])];
     State[dk] = shuffled(pool);
     State[pk] = 0;
   }
-  // 出せない卓（女性客が早すぎる／同じ顔が続く）は飛ばして次を引く
+  // 出せない卓（女性客が早すぎる／同じ顔が続く／まだ初対面していない再来店）は飛ばして次を引く
   //   ・女性客（偵察・同伴）は店が育ってから
   //   ・直近の夜に出た画像は、顔の使い回しが見えるので寝かせる
+  //   ・visit:2 の卓は「また来てくれた」から始まるので、1回目に会っていなければ出せない
   const skippable = (t) =>
-    (t.img === 'josei' && State.day < CONFIG.joseiFromDay) || mobImgOnCooldown(t.img);
+    (t.img === 'josei' && State.day < CONFIG.joseiFromDay)
+    || mobImgOnCooldown(t.img)
+    || (t.visit > 1 && ((State.mobSeen || {})[mobKey(t)] || 0) < t.visit - 1);
   const startPos = State[pk];
-  while (State[pk] < State[dk].length && skippable(State[dk][State[pk]])) State[pk]++;
-  if (State[pk] >= State[dk].length) {
+  // 飛ばした札は捨てずにデッキへ残す（引ける札を手前と入れ替えるだけ）。
+  // 以前はポインタを進めるだけだったので、寝かせ中・条件未達の札はそのまま流れて消えていた。
+  // 再来店の卓は初対面より先に引かれるのが普通なので、それだと一生出てこない
+  let i = State[pk];
+  while (i < State[dk].length && skippable(State[dk][i])) i++;
+  if (i >= State[dk].length) {
     // デッキを引き切った。寝かせ中の顔しか残っていない可能性があるので、
     // 一度だけデッキを組み直し、それでも埋まらなければ寝かせを無視して出す（無限ループ回避）
     if (State[dk + 'Retry']) {
       State[dk + 'Retry'] = false;
-      State[pk] = startPos < State[dk].length ? startPos : 0;
-      return State[dk][State[pk]++] || State[dk][0];
+      // 最後の逃げ道。顔の寝かせは諦めるが、初対面していない再来店だけは出さない
+      // （「また来ました」と言われても、こちらは会ったことがない、という卓になるため）
+      const okFirst = (t) => !(t.visit > 1 && ((State.mobSeen || {})[mobKey(t)] || 0) < t.visit - 1);
+      let j = State[dk].findIndex((t, k) => k >= (startPos < State[dk].length ? startPos : 0) && okFirst(t));
+      if (j < 0) j = State[dk].findIndex(okFirst);
+      if (j < 0) j = 0;
+      State[pk] = j + 1;
+      const t = State[dk][j];
+      noteMobImg(t.img);
+      noteMobSeen(t);
+      return t;
     }
     State[dk + 'Retry'] = true;
     State[dk] = null;
@@ -874,8 +924,14 @@ function drawTable(weird){
     State[dk + 'Retry'] = false;
     return t;
   }
+  if (i !== State[pk]) {
+    const tmp = State[dk][i];
+    State[dk][i] = State[dk][State[pk]];
+    State[dk][State[pk]] = tmp;
+  }
   const table = State[dk][State[pk]++];
   noteMobImg(table.img);
+  noteMobSeen(table);
   return table;
 }
 
@@ -1749,9 +1805,12 @@ function biyouSchedule(){
 
 function enterDay(){
   saveGame();   // 毎朝オートセーブ（中断してもこの日の朝から再開できる）
-  // 暴飲暴食（昨夜の閉店後の話なので、朝いちばん・他のイベントより先に置く）
+  // 暴飲暴食（昨夜の閉店後の話なので、朝いちばん・他のイベントより先に置く）。
+  // 同じ朝に「プチイベント→暴飲暴食」の順で連発しないよう、
+  // プチイベントが出た朝は暴飲暴食も出さない（雨の夜の逆順バージョンを防ぐ）
   const bg = CONFIG.binge;
-  if (State.mental < bg.line
+  if (State.lastPuchi !== State.day
+      && State.mental < bg.line
       && State.day - (State.lastBinge || -99) >= bg.cooldownDays
       && rnd() < bg.chance) {
     State.lastBinge = State.day;
@@ -2115,9 +2174,8 @@ function renderTitle(){
     : `<button class="btn btn-primary" onclick="G.newGame()">はじめる</button>`;
   $screen().innerHTML = `
     <div class="title-screen">
-      <p class="title-sub">キャバ嬢育成シミュレーション</p>
+      <p class="title-sub">売れっ子キャバ嬢育成ゲーム</p>
       <h1>億女を目指せ！</h1>
-      <p class="title-copy">武器は色気じゃない。トークと、機転と、心。</p>
       ${buttons}
       <p class="title-note">v0.4 プロトタイプ／毎朝オートセーブ</p>
     </div>`;
@@ -2273,23 +2331,17 @@ function workButtons(){
 }
 
 // ---- 日曜（店休）：ひとりで街へ ----
-// たまに本指名客と鉢合わせる。店の外で会う客は、店の中の客とは別人だ
+// ※かつては街で本指名客と鉢合わせるイベントがあったが、廃止した（作者判断）。
+//   客ごとに用意した立ち絵が「屋外・一人」で固定なのに対し、
+//   場面を書き分けようとすると絵と本文が必ず食い違う。
+//   共通の文面に戻すと、今度は全客とも正解が同じ（＝読まずに勝てる）になる。
+//   日曜は「ひとりで街へ出る日」に一本化する
 G.toSunday = function(){
   // 日曜が指定された頼まれごと（ライブの現場ヘルプなど）は、その日曜を丸ごと使う
   if (pendingMission()) { G.toMission(); return; }
-  const honshimeiIds = Object.keys(CUSTOMERS).filter(id => {
-    const cs = State.cust[id];
-    // noSundayMeet の客は街で鉢合わせない（共有の鉢合わせ文面が成立しない相手）
-    return cs && cs.visits >= 2 && !cs.banned && !CUSTOMERS[id].noSundayMeet;
-  });
-  if (honshimeiIds.length && rnd() < CONFIG.sunday.honshimeiChance) {
-    const custId = honshimeiIds[Math.floor(rnd() * honshimeiIds.length)];
-    State.sunday = { kind: 'honshimei', custId, picked: null };
-  } else {
-    const list = DATA.sundayEvents;
-    State.sunday = { kind: 'town', ev: list[State.sundayIdx % list.length], picked: null };
-    State.sundayIdx++;
-  }
+  const list = DATA.sundayEvents;
+  State.sunday = { kind: 'town', ev: list[State.sundayIdx % list.length], picked: null };
+  State.sundayIdx++;
   State.screen = 'sunday';
   render();
 };
@@ -2297,17 +2349,10 @@ G.toSunday = function(){
 G.sundayChoice = function(i){
   const s = State.sunday;
   const notes = [];
-  const c = s.kind === 'honshimei'
-    ? DATA.sundayHonshimei.choices[i]
-    : s.ev.choices[i];
+  const c = s.ev.choices[i];
   if (c.money)   { State.money += c.money; notes.push(`${c.money > 0 ? '+' : '-'}${yen(Math.abs(c.money))}`); }
   if (c.mental)  { State.mental  = clampMental(State.mental + c.mental);   notes.push(`メンタル ${c.mental > 0 ? '+' + c.mental : c.mental}`); }
   if (c.stamina) { State.stamina = clampStamina(State.stamina + c.stamina); notes.push(`体力 ${c.stamina > 0 ? '+' + c.stamina : c.stamina}`); }
-  if (c.aff && s.kind === 'honshimei') {
-    const cs = State.cust[s.custId];
-    cs.affection = clampAff(cs.affection + c.aff);
-    notes.push(`${CUSTOMERS[s.custId].name}の好感度 ${c.aff > 0 ? '+' + c.aff : c.aff}`);
-  }
   if (c.topic && !State.topics[c.topic]) {
     State.topics[c.topic] = true;
     notes.push(`話題の種を仕込んだ：${DATA.topicNames[c.topic]}`);
@@ -2499,18 +2544,15 @@ function renderApologize(){
 
 function renderSunday(){
   const s = State.sunday;
-  const honshimei = s.kind === 'honshimei';
-  const ev = honshimei ? DATA.sundayHonshimei : s.ev;
-  const name = honshimei ? CUSTOMERS[s.custId].name : '';
-  const title = honshimei ? `😳 ${ev.title}` : `🚶 ${ev.title}`;
-  const banner = sceneBanner(honshimei ? `sunday_${s.custId}` : 'room');
-  const body = honshimei ? ev.text.replace(/\{name\}/g, name) : ev.text;
+  const ev = s.ev;
+  const title = `🚶 ${ev.title}`;
+  const banner = sceneBanner('room');
 
   if (!s.picked) {
     $screen().innerHTML = `
       <h2>${title}</h2>
       ${banner}
-      <div class="story-box">${para(honshimei ? body : DATA.sundayIntro + '\n\n' + body)}</div>
+      <div class="story-box">${para(DATA.sundayIntro + '\n\n' + ev.text)}</div>
       <div class="choices">${ev.choices.map((c, i) =>
         `<button class="choice" onclick="G.sundayChoice(${i})">${esc(c.label)}</button>`).join('')}</div>`;
     return;
@@ -2520,7 +2562,7 @@ function renderSunday(){
   $screen().innerHTML = `
     <h2>${title}</h2>
     ${banner}
-    <div class="story-box ${honshimei && s.picked.aff < 0 ? 'bad' : ''}">${para(s.picked.react)}</div>
+    <div class="story-box">${para(s.picked.react)}</div>
     ${notes}
     <button class="btn btn-primary" onclick="G.endSunday()">日曜が、終わる</button>`;
 }
@@ -2644,10 +2686,10 @@ function renderSoutai(){
 function renderShukkin(){
   const n = State.night;
   const notes = [];
+  // 本指名の件数はここに出さない。キャバクラの本指名は店の予約ではなく、
+  // 客がキャバ嬢に直接「今日行く」と伝えて成立するもの。
+  // 出勤した時点で店から件数を知らされる、という筋が現実と合わない（作者判断）。
   if (inTutorial()) notes.push('今夜も先輩のヘルプ。卓の空気を、まず覚える');
-  else if (!n.honshimeiCount) notes.push('本指名は入っていない。今夜はフリーで勝負');
-  else if (n.honshimeiCount === 1) notes.push('本指名がひとつ入っている');
-  else notes.push(`本指名が${n.honshimeiCount}件。……聞き返してしまった`);
   if (n.extraMains > 0) {
     const ob = CONFIG.overbooked;
     notes.push(`卓が重なる夜は、それだけで削れる（体力 ${ob.stamina * n.extraMains}／メンタル ${ob.mental * n.extraMains}）`);
@@ -2665,9 +2707,8 @@ function renderShukkin(){
        <div class="story-box">${para(DATA.nightEventScenes[State.day] || '')}</div>`
     : n.chikoku ? `<div class="story-box bad">${para(n.chikokuText)}</div>`
     : `<div class="story-box">${para(
-        n.honshimeiCount >= 3 ? DATA.shukkinScenes.rush
-        : n.honshimeiCount === 2 ? DATA.shukkinScenes.busy
-        : inTutorial() ? DATA.shukkinScenes.help   // Day2のみ（Day1は出勤画面を挟まない）
+        // 本指名の件数による専用演出（busy/rush）は廃止。何件でも通常の出勤文で通す（作者判断）
+        inTutorial() ? DATA.shukkinScenes.help   // Day2のみ（Day1は出勤画面を挟まない）
         : DATA.shukkinScenes.normal)}</div>`;
   $screen().innerHTML = `
     <h2>🚪 出勤</h2>
@@ -2956,7 +2997,7 @@ function renderMain(){
     const delta = (r.type === 'explosion' && m.banned)
       ? `<div class="note-box"><p>・${esc(m.cust.name)}は、もう店に来ない</p></div>`
       : `<div class="note-box"><p>・好感度 ${r.dAff >= 0 ? '+' + r.dAff : r.dAff}／メンタル ${r.dMental}</p>${
-          r.type === 'explosion' ? `<p>・（好感度は残っている。……出禁ではない。次は、来る）</p>` : ''}</div>`;
+          r.type === 'explosion' ? `<p>・（好感度は残っている。……また来てくれる、はず）</p>` : ''}</div>`;
     $screen().innerHTML = `${header}
       <div class="story-box ${cls}">${para(r.text)}</div>
       ${delta}
